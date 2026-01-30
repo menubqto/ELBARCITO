@@ -111,6 +111,9 @@
 <body class="bg-ritual-bg text-ritual-text min-h-screen transition-colors duration-700 ease-in-out">
     <div id="root"></div>
 
+    <!-- Menu Data Script -->
+    <script src="menu_data.js"></script>
+
     <!-- Firebase SDKs (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -120,12 +123,12 @@
 
         // --- 1. CONFIGURACIÓN DE FIREBASE ---
         const firebaseConfig = {
-            apiKey: "AIzaSyAYfR7--e2tMUu4G0Mdz8FQIeqEYYlcoho",
-            authDomain: "el-barcito-babf6.firebaseapp.com",
-            projectId: "el-barcito-babf6",
-            storageBucket: "el-barcito-babf6.firebasestorage.app",
-            messagingSenderId: "728318215142",
-            appId: "1:728318215142:web:b82292ff94c10dbfd8cc27"
+            apiKey: "AIzaSyCbkFb2Dw3Qxc7-9cFzo3Rrd0ZV0nmjDOY",
+            authDomain: "el-barcito-f5523.firebaseapp.com",
+            projectId: "el-barcito-f5523",
+            storageBucket: "el-barcito-f5523.firebasestorage.app",
+            messagingSenderId: "144888151909",
+            appId: "1:144888151909:web:94f90d9459bc33a9f96b8c"
         };
 
         const appId = 'ritual-bar-app';
@@ -137,237 +140,7 @@
         window.dbInstance = null; // Exponer para debug
 
         // --- 2. DATOS SEMILLA (Definidos PRIMERO para asegurar disponibilidad) ---
-        const seedData = {
-            theme: 'elbarcito',
-            categories: [
-                {
-                    id: 'cocteleria',
-                    name: 'Coctelería',
-                    icon: 'Martini',
-                    visible: true,
-                    items: [
-                        { name: 'Mojito Clasico', desc: 'Ron blanco, limón, hierbabuena. (Fresa, Parchita o Limón)', price: 3 },
-                        { name: 'Margarita', desc: 'Tequila, triple sec, limón, agave/azúcar', price: 3 },
-                        { name: 'Daiquirí', desc: 'Ron dorado, limón, azúcar, Angostura naranja', price: 3 },
-                        { name: 'Paloma', desc: 'Tequila, limón, sal, refresco de toronja', price: 3 },
-                        { name: 'El Barcito Especial', desc: 'Curaçao, Naiguatá, Vodka, parchita, limón, soda', price: 4 },
-                        { name: 'Aperol Spritz', desc: 'Espumante, Aperol y soda', price: 4 },
-                        { name: 'Moscow Mule', desc: 'Vodka, limón y Ginger beer', price: 4 },
-                        { name: 'Veragacha', desc: 'Parchita, fresa, limón, vainilla, vodka, Naiguatá', price: 4 },
-                        { name: 'Mai Tai', desc: 'Ron dorado, triple sec, Frangelico, limón', price: 4 },
-                        { name: 'Fresquito', desc: 'Ron coco, ron blanco, parchita, limón, naranja, fresa', price: 4 }
-                    ]
-                },
-                {
-                    id: 'cervezas',
-                    name: 'Las Chelas',
-                    icon: 'Beer',
-                    visible: true,
-                    items: [
-                        { name: 'Polar Pilsen (Sifón)', desc: 'Bien fría', price: 1 },
-                        { name: 'Polar Pilsen (Botella)', desc: 'Clásica', price: 1.60 },
-                        { name: 'Polar Pilsen (Lata 250ml)', desc: 'Lata pequeña', price: 1.75 },
-                        { name: 'Polar Light (Botella)', desc: 'Ligera', price: 1.60 },
-                        { name: 'Polar Light (Lata)', desc: 'Lata pequeña', price: 1.50 },
-                        { name: 'Solera Azul (Botella)', desc: 'Premium', price: 1.60 },
-                        { name: 'Solera Azul (Lata)', desc: 'Lata pequeña', price: 1.75 },
-                        { name: 'Solera Verde (Botella)', desc: 'Original', price: 1.80 },
-                        { name: 'Solera Verde (Lata)', desc: 'Lata pequeña', price: 2.50 },
-                        { name: 'Michelada', desc: 'Cerveza preparada con limón y sal', price: 1.50 },
-                        { name: 'Tobo Pilsen/Light/Azul', desc: '10 Unidades (Lun-Mié)', price: 10 },
-                        { name: 'Tobo Pilsen/Light/Azul (Finde)', desc: '10 Unidades (Jue-Dom)', price: 12 },
-                        { name: 'Tobo Solera Verde', desc: '10 Unidades (Toda la semana)', price: 15 }
-                    ]
-                },
-                {
-                    id: 'whisky',
-                    name: 'Whisky',
-                    icon: 'GlassWater',
-                    visible: true,
-                    items: [
-                        {
-                            name: 'Etiqueta Negra',
-                            desc: 'Johnnie Walker Black Label',
-                            variants: [
-                                { name: 'Servicio', price: 50 },
-                                { name: 'Trago', price: 5 }
-                            ]
-                        },
-                        {
-                            name: 'Buchanans 18 Años',
-                            desc: 'Añejado 18 años',
-                            variants: [
-                                { name: 'Servicio', price: 110 },
-                                { name: 'Trago', price: 10 }
-                            ]
-                        },
-                        {
-                            name: 'Buchanans 12 Años',
-                            desc: 'DeLuxe Scoth Whisky',
-                            variants: [
-                                { name: 'Servicio', price: 55 },
-                                { name: 'Trago', price: 6 }
-                            ]
-                        },
-                        {
-                            name: 'Old Parr 12 Años',
-                            desc: 'Grand Old Parr',
-                            variants: [
-                                { name: 'Servicio', price: 50 },
-                                { name: 'Trago', price: 5.50 }
-                            ]
-                        },
-                        {
-                            name: 'Grant’s 12 Años',
-                            desc: 'Triple Wood 12',
-                            variants: [
-                                { name: 'Servicio', price: 40 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        },
-                        {
-                            name: 'Black & White',
-                            desc: 'Blended Scotch Whisky',
-                            variants: [
-                                { name: 'Servicio', price: 25 },
-                                { name: 'Trago', price: 3 }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    id: 'ron',
-                    name: 'Ron',
-                    icon: 'Milk',
-                    visible: true,
-                    items: [
-                        {
-                            name: 'Cacique 500',
-                            desc: 'Ron Premium',
-                            variants: [
-                                { name: 'Servicio', price: 35 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        },
-                        {
-                            name: 'Cacique Añejo',
-                            desc: 'Ron Dorado',
-                            variants: [
-                                { name: 'Servicio', price: 25 },
-                                { name: 'Trago', price: 3 }
-                            ]
-                        },
-                        {
-                            name: 'Santa Teresa 1796 Solera',
-                            desc: 'Ron Ultra Premium',
-                            variants: [
-                                { name: 'Servicio', price: 50 },
-                                { name: 'Trago', price: 5 }
-                            ]
-                        },
-                        {
-                            name: 'Santa Teresa 1796 Speyside',
-                            desc: 'Edición Especial',
-                            variants: [
-                                { name: 'Servicio', price: 60 },
-                                { name: 'Trago', price: 6 }
-                            ]
-                        },
-                        {
-                            name: 'Diplomático Sel. Familia',
-                            desc: 'Selección de Familia',
-                            variants: [
-                                { name: 'Servicio', price: 65 },
-                                { name: 'Trago', price: 8 }
-                            ]
-                        },
-                        {
-                            name: 'Diplomático Reserva Excl.',
-                            desc: 'Reserva Exclusiva',
-                            variants: [
-                                { name: 'Servicio', price: 55 },
-                                { name: 'Trago', price: 6 }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    id: 'vodka',
-                    name: 'Vodka',
-                    icon: 'Wine',
-                    visible: true,
-                    items: [
-                        {
-                            name: 'Smirnoff',
-                            desc: 'Vodka No. 21',
-                            variants: [
-                                { name: 'Servicio', price: 40 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        },
-                        {
-                            name: 'Gordons',
-                            desc: 'London Dry Gin',
-                            variants: [
-                                { name: 'Servicio', price: 30 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        },
-                        {
-                            name: 'Stanislaff',
-                            desc: 'Vodka',
-                            variants: [
-                                { name: 'Servicio', price: 30 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        },
-                        {
-                            name: 'Stolichnaya',
-                            desc: 'Premium Vodka',
-                            variants: [
-                                { name: 'Servicio', price: 40 },
-                                { name: 'Trago', price: 4 }
-                            ]
-                        }
-                    ]
-                },
-                {
-                    id: 'pal-calor',
-                    name: "Pal' Calor (Frappés)",
-                    icon: 'Snowflake',
-                    visible: true,
-                    items: [
-                        { name: 'Sangría Caroreña (Copa)', desc: 'Blanca o Tinta (Frappé)', price: 2 },
-                        { name: 'Sangría Caroreña (Lata)', desc: 'Blanca o Tinta', price: 2.50 },
-                        { name: 'Juguitos', desc: 'Fresa, Parchita, Limón, Mora, Naranja, Piña', price: 2 }
-                    ]
-                },
-                {
-                    id: 'refrescos',
-                    name: 'Bebidas',
-                    icon: 'Citrus',
-                    visible: true,
-                    items: [
-                        { name: 'Refrescos (Lata)', desc: 'Pepsi (Original, Light, Zero), 7up, Kolita', price: 2 },
-                        { name: 'Mezcladores', desc: 'Soda, Aguakina', price: 2 },
-                        { name: 'Agua Minalba', desc: '600ml', price: 1.70 },
-                        { name: 'H2Oh! / Sparklin', desc: 'Original, Naranja, Limón o Toronja', price: 2 },
-                        { name: 'Lipton Ice Tea', desc: 'Limón o Durazno', price: 2.50 },
-                        { name: 'Gatorade', desc: 'Frutos Rojos, Mora o Mandarina', price: 3 }
-                    ]
-                },
-                {
-                    id: 'promos',
-                    name: 'Dinámicas y Promos',
-                    icon: 'Cherry',
-                    visible: true,
-                    items: [
-                        { name: 'Shot Gratis', desc: 'Sube una historia y etiquétanos @elbarcito_ve', price: 0 },
-                        { name: 'Juegos de Mesa', desc: 'Jenga o Dados disponibles', price: 0 }
-                    ]
-                }
-            ]
-        };
+        const seedData = window.rawSeedData || { categories: [] };
 
         // Helper: Sort Items by Price
         window.sortCategories = (data) => {
@@ -378,7 +151,16 @@
                 const sortedItems = [...cat.items].sort((a, b) => {
                     const priceA = a.variants ? Math.min(...a.variants.map(v => v.price)) : a.price;
                     const priceB = b.variants ? Math.min(...b.variants.map(v => v.price)) : b.price;
-                    return priceA - priceB;
+                    return priceB - priceA; // Descending Sort (Highest to Lowest)
+                });
+                // Secondary sort by name (Alphabetical)
+                sortedItems.sort((a, b) => {
+                    const priceA = a.variants ? Math.min(...a.variants.map(v => v.price)) : a.price;
+                    const priceB = b.variants ? Math.min(...b.variants.map(v => v.price)) : b.price;
+                    if (priceA === priceB) {
+                        return a.name.localeCompare(b.name);
+                    }
+                    return 0; // Already sorted by price
                 });
                 return { ...cat, items: sortedItems };
             });
@@ -1245,6 +1027,8 @@
                                         <LucideIcon name="Palette" size={16} />
                                         <span className="text-[10px] uppercase tracking-wider">Temas</span>
                                     </button>
+
+
 
                                     {/* Status Pill */}
                                     <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 border transition-colors ${dbStatus === 'connected' ? 'bg-green-500/20 text-green-100 border-green-500/50' : 'bg-red-500/20 text-red-100 border-red-500/50'} `}>
