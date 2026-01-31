@@ -630,8 +630,11 @@
                 setIsSaving(false);
             };
 
+            // HELPER: Deep Copy para evitar mutaciones de estado
+            const getCleanData = () => structuredClone(menuData);
+
             const updateItem = (catId, index, field, value) => {
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 if (field === 'price') value = Number(value);
                 newData.categories[catIndex].items[index][field] = value;
@@ -639,7 +642,7 @@
             };
 
             const updateVariant = (catId, itemIndex, variantIndex, field, value) => {
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 if (field === 'price') value = Number(value);
                 newData.categories[catIndex].items[itemIndex].variants[variantIndex][field] = value;
@@ -647,12 +650,11 @@
             };
 
             const addVariant = (catId, itemIndex) => {
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 const item = newData.categories[catIndex].items[itemIndex];
 
                 if (!item.variants) {
-                    // Convert single price item to variants
                     item.variants = [
                         { name: "Estándar", price: item.price || 0 },
                         { name: "Nuevo", price: 0 }
@@ -666,7 +668,7 @@
 
             const removeVariant = (catId, itemIndex, variantIndex) => {
                 if (!confirm("¿Eliminar este sub-producto?")) return;
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 const item = newData.categories[catIndex].items[itemIndex];
 
@@ -686,7 +688,7 @@
 
             const deleteItem = (catId, index) => {
                 if (!confirm("¿Estás seguro de borrar este plato?")) return;
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 newData.categories[catIndex].items.splice(index, 1);
                 saveChanges(newData);
@@ -695,21 +697,30 @@
             const addItem = (catId) => {
                 const name = prompt("Nombre del nuevo plato:");
                 if (!name) return;
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
-                newData.categories[catIndex].items.push({ name, desc: "Descripción nueva", price: 0, image: null });
+                // Ensure items array exists
+                if (!newData.categories[catIndex].items) newData.categories[catIndex].items = [];
+
+                newData.categories[catIndex].items.push({
+                    name,
+                    desc: "Descripción nueva",
+                    price: 0,
+                    image: null,
+                    variants: null
+                });
                 saveChanges(newData);
             };
 
             const toggleCatVisibility = (catId) => {
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 newData.categories[catIndex].visible = !newData.categories[catIndex].visible;
                 saveChanges(newData);
             };
 
             const updateCategoryName = (catId, newName) => {
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === catId);
                 newData.categories[catIndex].name = newName;
                 saveChanges(newData);
@@ -717,7 +728,7 @@
 
             const updateCategoryIcon = (iconName) => {
                 if (!editingIconCategory) return;
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 const catIndex = newData.categories.findIndex(c => c.id === editingIconCategory);
                 newData.categories[catIndex].icon = iconName;
                 saveChanges(newData);
@@ -725,23 +736,29 @@
             };
 
             const addCategory = () => {
-                const newId = `cat - ${Date.now()}`;
+                const newData = getCleanData();
+                const newId = `cat-${Date.now()}`;
                 const newCat = {
-                    id: newId, name: 'Nueva Categoría', icon: 'Utensils', visible: false, items: []
+                    id: newId,
+                    name: 'NUEVA CATEGORÍA',
+                    icon: 'Utensils',
+                    visible: true, // Default visible to avoid consistency confusion
+                    items: []
                 };
-                const newData = { ...menuData, categories: [...menuData.categories, newCat] };
+                newData.categories.push(newCat);
                 saveChanges(newData);
             };
 
             const deleteCategory = (catId) => {
                 if (!confirm("¿Estás seguro de eliminar toda esta categoría y sus platos?")) return;
-                const newData = { ...menuData };
+                const newData = getCleanData();
                 newData.categories = newData.categories.filter(c => c.id !== catId);
                 saveChanges(newData);
             };
 
             const changeTheme = (themeId) => {
-                const newData = { ...menuData, theme: themeId };
+                const newData = getCleanData();
+                newData.theme = themeId;
                 saveChanges(newData);
             };
 
