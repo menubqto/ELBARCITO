@@ -148,8 +148,6 @@
             const sortedData = { ...data };
 
             // Leer configuración de ordenamiento del objeto de datos (o usar defaults)
-            // productSort options: 'price-desc', 'price-asc', 'alpha', 'variants-max', 'variants-min'
-            // variantSort options: 'price-asc', 'price-desc', 'alpha'
             const pSort = data.productSort || 'price-desc'; 
             const vSort = data.variantSort || 'price-asc';
 
@@ -475,12 +473,12 @@
                 }
             }, [menuData]);
 
-            // ... (Lógica de Cropper igual) ...
+            // --- Lógica de Recorte con Proporción 7:5 ---
             useEffect(() => {
                 if (showCropModal && cropImageSrc && imageElementRef.current) {
                     if (cropperRef.current) cropperRef.current.destroy();
                     cropperRef.current = new Cropper(imageElementRef.current, {
-                        aspectRatio: 1,
+                        aspectRatio: 7 / 5, // PROPORCIÓN 7:5
                         viewMode: 1,
                         background: false,
                         autoCropArea: 1,
@@ -503,8 +501,9 @@
                 if (!cropperRef.current || !editingItemCoords) return;
                 setIsSaving(true);
                 try {
-                    const canvas = cropperRef.current.getCroppedCanvas({ width: 350, height: 350, imageSmoothingEnabled: true, imageSmoothingQuality: 'high' });
-                    const imageUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    // Ancho 700px, Alto 500px (Proporción exacta 7:5)
+                    const canvas = cropperRef.current.getCroppedCanvas({ width: 700, height: 500, imageSmoothingEnabled: true, imageSmoothingQuality: 'high' });
+                    const imageUrl = canvas.toDataURL('image/jpeg', 0.85); // Calidad mejorada
                     const { catId, index } = editingItemCoords;
                     updateItem(catId, index, 'image', imageUrl);
                     setShowCropModal(false); setCropImageSrc(null); setEditingItemCoords(null); setIsSaving(false); canvas.remove();
@@ -653,18 +652,18 @@
                                             <div className="border-t border-ritual-accent/10 bg-black/10 cursor-pointer" onDoubleClick={(e) => { if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return; setActiveCategory(null); }} title="Doble click en el fondo para cerrar">
                                                 <div className="p-4 space-y-4 cursor-auto">
                                                     {cat.items.map((item, index) => (
-                                                        <div key={index} className="flex gap-4 group relative p-2 rounded-lg hover:bg-white/5 transition-colors">
-                                                            {item.image && (
-                                                                <div className="w-32 h-32 shrink-0 rounded-lg overflow-hidden border border-ritual-muted/20 shadow-sm bg-black/20 self-center">
-                                                                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                                                                </div>
-                                                            )}
-                                                            <div className="flex-1 flex flex-row items-center gap-3 py-1">
-                                                                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                                        <div key={index} className="flex flex-col gap-4 group relative p-4 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 transition-colors shadow-sm">
+                                                            
+                                                            {/* SECCIÓN SUPERIOR: Texto y Precios */}
+                                                            <div className="flex justify-between gap-4">
+                                                                {/* Lado Izquierdo: Nombre y Descripción */}
+                                                                <div className="flex-1 flex flex-col justify-center">
                                                                     <div className="flex flex-col">
                                                                         {isAdmin ? ( <input className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors" value={item.name} onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)} /> ) : ( <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3> )}
                                                                         {isAdmin ? ( <textarea className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors" value={item.desc} onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)} /> ) : ( item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p> )}
                                                                     </div>
+                                                                    
+                                                                    {/* Controles Admin para Imagen y Borrado */}
                                                                     {isAdmin && (
                                                                         <div className="flex items-center gap-2 mt-2">
                                                                             <label className="cursor-pointer text-ritual-muted hover:text-ritual-accent transition-colors p-1" title="Subir Foto">
@@ -676,7 +675,9 @@
                                                                         </div>
                                                                     )}
                                                                 </div>
-                                                                <div className="w-1/2 flex flex-col gap-1 justify-center shrink-0">
+
+                                                                {/* Lado Derecho: Precios y Variantes */}
+                                                                <div className="w-2/5 shrink-0 flex flex-col gap-1 justify-center">
                                                                     {item.variants ? (
                                                                         item.variants.map((v, vIndex) => (
                                                                             <div key={vIndex} className="flex justify-between items-center w-full bg-white/5 px-2 py-1 rounded text-xs gap-2 mb-1">
@@ -710,6 +711,16 @@
                                                                     {isAdmin && item.variants && ( <button onClick={() => addVariant(cat.id, index)} className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"> + Agregar Sub-Producto </button> )}
                                                                 </div>
                                                             </div>
+
+                                                            {/* SECCIÓN INFERIOR: Imagen 7:5 */}
+                                                            {item.image && (
+                                                                <div className="w-full rounded-md overflow-hidden border border-ritual-muted/20 shadow-lg relative mt-1">
+                                                                    {/* Contenedor Aspect Ratio Hack (padding-bottom: 71.42% es 5/7) */}
+                                                                    <div style={{ paddingBottom: '71.42%' }} className="relative w-full bg-black/50">
+                                                                        <img src={item.image} alt={item.name} className="absolute inset-0 w-full h-full object-cover" />
+                                                                    </div>
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     ))}
                                                     {isAdmin && ( <button onClick={() => addItem(cat.id)} className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"> <LucideIcon name="Plus" size={16} /> Agregar Plato </button> )}
@@ -736,7 +747,7 @@
                         <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center z-[60] p-4 animate-fadeIn">
                             <div className="bg-ritual-card w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-ritual-accent/30 flex flex-col max-h-[90vh]">
                                 <div className="p-4 border-b border-ritual-muted/20 flex justify-between items-center bg-ritual-bg/50">
-                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2 text-sm"><LucideIcon name="Crop" size={16} /> Ajustar Imagen</h3>
+                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2 text-sm"><LucideIcon name="Crop" size={16} /> Ajustar Imagen (7:5)</h3>
                                     <button onClick={() => { setShowCropModal(false); setCropImageSrc(null); }} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
                                 </div>
                                 <div className="flex-1 bg-black relative overflow-hidden flex items-center justify-center p-4">
