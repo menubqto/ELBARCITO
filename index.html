@@ -139,31 +139,57 @@
         window.firebaseStatus = 'initializing'; // 'connected', 'disconnected', 'error'
         window.dbInstance = null; // Exponer para debug
 
-        // --- 2. DATOS SEMILLA (Definidos PRIMERO para asegurar disponibilidad) ---
+        // --- 2. DATOS SEMILLA ---
         const seedData = window.rawSeedData || { categories: [] };
 
-        // Helper: Sort Items by Price (Solo ordena ITEMS, no categorias)
+        // --- FUNCIÓN DE ORDENAMIENTO AVANZADA ---
         window.sortCategories = (data) => {
             if (!data || !data.categories) return data;
             const sortedData = { ...data };
+            
             sortedData.categories = sortedData.categories.map(cat => {
                 if (!cat.items) return cat;
-                const sortedItems = [...cat.items].sort((a, b) => {
-                    const priceA = a.variants ? Math.min(...a.variants.map(v => v.price)) : a.price;
-                    const priceB = b.variants ? Math.min(...b.variants.map(v => v.price)) : b.price;
-                    return priceB - priceA; // Descending Sort (Highest to Lowest)
+
+                // 1. Clonamos los items para no mutar referencias originales
+                let processedItems = cat.items.map(item => {
+                    let newItem = { ...item };
+                    
+                    // A. Ordenar Variantes (Sub-productos): Del MÁS BARATO al MÁS CARO
+                    if (newItem.variants && newItem.variants.length > 0) {
+                        newItem.variants = [...newItem.variants].sort((a, b) => a.price - b.price);
+                    }
+                    return newItem;
                 });
-                // Secondary sort by name (Alphabetical)
-                sortedItems.sort((a, b) => {
-                    const priceA = a.variants ? Math.min(...a.variants.map(v => v.price)) : a.price;
-                    const priceB = b.variants ? Math.min(...b.variants.map(v => v.price)) : b.price;
-                    if (priceA === priceB) {
+
+                // 2. Ordenar Productos en la Categoría: Del MÁS CARO al MÁS BARATO
+                processedItems.sort((a, b) => {
+                    // Si tiene variantes, usamos el precio MÁXIMO para el ranking de la categoría
+                    const maxPriceA = a.variants && a.variants.length > 0 
+                        ? Math.max(...a.variants.map(v => v.price)) 
+                        : a.price;
+                    
+                    const maxPriceB = b.variants && b.variants.length > 0 
+                        ? Math.max(...b.variants.map(v => v.price)) 
+                        : b.price;
+
+                    // Orden descendente (Mayor a menor)
+                    return maxPriceB - maxPriceA; 
+                });
+
+                // 3. Orden secundario por nombre (si los precios son iguales)
+                processedItems.sort((a, b) => {
+                    const maxPriceA = a.variants && a.variants.length > 0 ? Math.max(...a.variants.map(v => v.price)) : a.price;
+                    const maxPriceB = b.variants && b.variants.length > 0 ? Math.max(...b.variants.map(v => v.price)) : b.price;
+                    
+                    if (maxPriceA === maxPriceB) {
                         return a.name.localeCompare(b.name);
                     }
-                    return 0; // Already sorted by price
+                    return 0; // Ya está ordenado por precio
                 });
-                return { ...cat, items: sortedItems };
+
+                return { ...cat, items: processedItems };
             });
+
             return sortedData;
         };
 
@@ -182,16 +208,10 @@
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
-
-                    // CORRECCIÓN CRÍTICA:
-                    // Si existen datos en la nube, confiamos en ellos completamente.
-                    // NO intentamos fusionar con seedData usando IDs porque eso borraba las categorías nuevas.
                     
                     if (cloudData && cloudData.categories && cloudData.categories.length > 0) {
-                        // Solo ordenamos los items dentro de las categorías, respetando el orden de las categorías
                         return window.sortCategories(cloudData);
                     } else {
-                        // Si el documento existe pero está vacío o corrupto, volvemos a seed
                         return window.sortCategories(seedData);
                     }
                 } else {
@@ -296,14 +316,18 @@
             { id: 'halloween', name: 'Halloween (Naranja/Morado)', colors: { bg: '#0a0a0a', card: '#3b0764', accent: '#ea580c', text: '#f3f4f6', muted: '#9ca3af' } }
         ];
 
+        // --- LISTA DE ICONOS AMPLIADA ---
         const AVAILABLE_ICONS = [
-            'UtensilsCrossed', 'Fish', 'Martini', 'Wine', 'Flame',
-            'Pizza', 'Sandwich', 'Coffee', 'IceCream', 'Cake',
-            'Beer', 'Croissant', 'Soup', 'Beef', 'Carrot',
-            'Grape', 'ChefHat', 'Cookie', 'Cherry', 'Citrus',
-            'GlassWater', 'Anchor', 'Snowflake', 'Milk',
-            'CupSoda', 'FlaskConical', 'FlaskRound', 'Beaker', 'TestTube',
-            'Popcorn', 'Nut', 'Salad', 'PartyPopper', 'Utensils'
+            // Básicos
+            'UtensilsCrossed', 'Utensils', 'ChefHat',
+            // Bebidas / Fiesta
+            'Martini', 'Wine', 'Beer', 'GlassWater', 'CupSoda', 'PartyPopper', 'Music', 'Disc',
+            // Comida
+            'Pizza', 'Sandwich', 'Soup', 'Beef', 'Fish', 'Croissant', 'Cookie', 'Cake', 'IceCream', 'Popcorn', 'Nut', 'Salad', 'Egg',
+            // Ingredientes / Frutas / Naturaleza
+            'Apple', 'Banana', 'Cherry', 'Grape', 'Citrus', 'Carrot', 'Leaf', 'Wheat', 'Flower', 'Palmtree', 'Vegan', 'Milk', 'Flame', 'Snowflake', 'Droplet',
+            // Laboratorio / Café
+            'Coffee', 'FlaskConical', 'FlaskRound', 'Beaker', 'TestTube', 'Anchor', 'Cloud'
         ];
 
         const LucideIcon = ({ name, size = 24, className = "" }) => {
@@ -604,7 +628,11 @@
                 }
             };
 
-            const saveChanges = async (newData) => {
+            const saveChanges = async (newDataRaw) => {
+                // Importante: Aplicamos el ordenamiento antes de guardar en estado y BD
+                // para que la UI se refresque con el orden correcto inmediatamente.
+                const newData = window.sortCategories(newDataRaw);
+
                 setMenuData(newData);
                 setIsSaving(true);
                 if (window.saveMenuToDB) {
@@ -759,7 +787,7 @@
                 saveChanges(newData);
             };
 
-            // NUEVA FUNCIÓN: Mover Categoría
+            // FUNCIÓN: Mover Categoría
             const moveCategory = (index, direction, e) => {
                 e.stopPropagation(); // Evitar colapsar/expandir al hacer click
                 const newData = getCleanData();
@@ -903,158 +931,170 @@
                                         </div>
                                     </div>
 
-                                    {/* LISTA DE PLATOS */}
-                                    {activeCategory === cat.id && (
-                                        <div className="border-t border-ritual-accent/10 animate-fadeIn bg-black/10">
-                                            <div className="p-4 space-y-4">
-                                                {cat.items.map((item, index) => (
-                                                    <div key={index} className="flex gap-4 group relative p-2 rounded-lg hover:bg-white/5 transition-colors">
+                                    {/* LISTA DE PLATOS (Con Animación de Cierre) */}
+                                    <div 
+                                        className={`grid transition-[grid-template-rows,opacity] duration-500 ease-in-out ${activeCategory === cat.id ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
+                                    >
+                                        <div className="overflow-hidden">
+                                            <div 
+                                                className="border-t border-ritual-accent/10 bg-black/10 cursor-pointer"
+                                                onDoubleClick={(e) => {
+                                                    // Evitar cerrar si se está editando texto
+                                                    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
+                                                    setActiveCategory(null);
+                                                }}
+                                                title="Doble click en el fondo para cerrar"
+                                            >
+                                                <div className="p-4 space-y-4 cursor-auto">
+                                                    {cat.items.map((item, index) => (
+                                                        <div key={index} className="flex gap-4 group relative p-2 rounded-lg hover:bg-white/5 transition-colors">
 
-                                                        {item.image && (
-                                                            <div className="w-32 h-32 shrink-0 rounded-lg overflow-hidden border border-ritual-muted/20 shadow-sm bg-black/20 self-center">
-                                                                <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
-                                                            </div>
-                                                        )}
+                                                            {item.image && (
+                                                                <div className="w-32 h-32 shrink-0 rounded-lg overflow-hidden border border-ritual-muted/20 shadow-sm bg-black/20 self-center">
+                                                                    <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                                                                </div>
+                                                            )}
 
-                                                        <div className="flex-1 flex flex-row items-center gap-3 py-1">
+                                                            <div className="flex-1 flex flex-row items-center gap-3 py-1">
 
-                                                            {/* IZQUIERDA: Info del Producto */}
-                                                            <div className="flex-1 min-w-0 flex flex-col justify-center">
-                                                                <div className="flex flex-col">
-                                                                    {isAdmin ? (
-                                                                        <input
-                                                                            className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors"
-                                                                            value={item.name}
-                                                                            onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)}
-                                                                        />
-                                                                    ) : (
-                                                                        <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3>
-                                                                    )}
+                                                                {/* IZQUIERDA: Info del Producto */}
+                                                                <div className="flex-1 min-w-0 flex flex-col justify-center">
+                                                                    <div className="flex flex-col">
+                                                                        {isAdmin ? (
+                                                                            <input
+                                                                                className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors"
+                                                                                value={item.name}
+                                                                                onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)}
+                                                                            />
+                                                                        ) : (
+                                                                            <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3>
+                                                                        )}
 
-                                                                    {isAdmin ? (
-                                                                        <textarea
-                                                                            className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors"
-                                                                            value={item.desc}
-                                                                            onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)}
-                                                                        />
-                                                                    ) : (
-                                                                        item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p>
+                                                                        {isAdmin ? (
+                                                                            <textarea
+                                                                                className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors"
+                                                                                value={item.desc}
+                                                                                onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)}
+                                                                            />
+                                                                        ) : (
+                                                                            item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p>
+                                                                        )}
+                                                                    </div>
+
+                                                                    {/* Admin Actions */}
+                                                                    {isAdmin && (
+                                                                        <div className="flex items-center gap-2 mt-2">
+                                                                            <label className="cursor-pointer text-ritual-muted hover:text-ritual-accent transition-colors p-1" title="Subir Foto">
+                                                                                <input
+                                                                                    type="file"
+                                                                                    accept="image/*"
+                                                                                    className="hidden"
+                                                                                    onChange={(e) => handleFileSelect(e, cat.id, index)}
+                                                                                />
+                                                                                <LucideIcon name="Camera" size={14} />
+                                                                            </label>
+                                                                            {item.image && (
+                                                                                <button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen">
+                                                                                    <LucideIcon name="ImageMinus" size={14} />
+                                                                                </button>
+                                                                            )}
+                                                                            <button onClick={() => deleteItem(cat.id, index)} className="text-red-500/50 hover:text-red-400 p-1" title="Eliminar plato">
+                                                                                <LucideIcon name="Trash2" size={14} />
+                                                                            </button>
+                                                                        </div>
                                                                     )}
                                                                 </div>
 
-                                                                {/* Admin Actions */}
-                                                                {isAdmin && (
-                                                                    <div className="flex items-center gap-2 mt-2">
-                                                                        <label className="cursor-pointer text-ritual-muted hover:text-ritual-accent transition-colors p-1" title="Subir Foto">
-                                                                            <input
-                                                                                type="file"
-                                                                                accept="image/*"
-                                                                                className="hidden"
-                                                                                onChange={(e) => handleFileSelect(e, cat.id, index)}
-                                                                            />
-                                                                            <LucideIcon name="Camera" size={14} />
-                                                                        </label>
-                                                                        {item.image && (
-                                                                            <button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen">
-                                                                                <LucideIcon name="ImageMinus" size={14} />
-                                                                            </button>
-                                                                        )}
-                                                                        <button onClick={() => deleteItem(cat.id, index)} className="text-red-500/50 hover:text-red-400 p-1" title="Eliminar plato">
-                                                                            <LucideIcon name="Trash2" size={14} />
-                                                                        </button>
-                                                                    </div>
-                                                                )}
-                                                            </div>
-
-                                                            {/* DERECHA: Precios (50% width, Stacked) */}
-                                                            <div className="w-1/2 flex flex-col gap-1 justify-center shrink-0">
-                                                                {item.variants ? (
-                                                                    item.variants.map((v, vIndex) => (
-                                                                        <div key={vIndex} className="flex justify-between items-center w-full bg-white/5 px-2 py-1 rounded text-xs gap-2 mb-1">
+                                                                {/* DERECHA: Precios (50% width, Stacked) */}
+                                                                <div className="w-1/2 flex flex-col gap-1 justify-center shrink-0">
+                                                                    {item.variants ? (
+                                                                        item.variants.map((v, vIndex) => (
+                                                                            <div key={vIndex} className="flex justify-between items-center w-full bg-white/5 px-2 py-1 rounded text-xs gap-2 mb-1">
+                                                                                {isAdmin ? (
+                                                                                    <>
+                                                                                        <input
+                                                                                            value={v.name}
+                                                                                            onChange={(e) => updateVariant(cat.id, index, vIndex, 'name', e.target.value)}
+                                                                                            className="bg-transparent text-ritual-muted text-[10px] uppercase tracking-wider w-full outline-none border-b border-white/10 focus:border-ritual-accent placeholder-white/20"
+                                                                                            placeholder="NOMBRE"
+                                                                                        />
+                                                                                        <div className="flex items-center gap-1">
+                                                                                            <span className="text-ritual-accent">$</span>
+                                                                                            <input
+                                                                                                type="number"
+                                                                                                value={v.price}
+                                                                                                onChange={(e) => updateVariant(cat.id, index, vIndex, 'price', e.target.value)}
+                                                                                                className="bg-transparent font-bold text-ritual-accent w-12 text-right outline-none border-b border-white/10 focus:border-ritual-accent"
+                                                                                            />
+                                                                                            <button onClick={() => removeVariant(cat.id, index, vIndex)} className="text-red-400 hover:text-red-300 ml-1">
+                                                                                                <LucideIcon name="Trash2" size={12} />
+                                                                                            </button>
+                                                                                        </div>
+                                                                                    </>
+                                                                                ) : (
+                                                                                    <>
+                                                                                        <span className="text-ritual-muted truncate text-[10px] uppercase tracking-wider">{v.name}</span>
+                                                                                        <span className="font-bold text-ritual-accent whitespace-nowrap ml-2">${v.price}</span>
+                                                                                    </>
+                                                                                )}
+                                                                            </div>
+                                                                        ))
+                                                                    ) : (
+                                                                        <div className="flex flex-col items-end w-full">
                                                                             {isAdmin ? (
                                                                                 <>
-                                                                                    <input
-                                                                                        value={v.name}
-                                                                                        onChange={(e) => updateVariant(cat.id, index, vIndex, 'name', e.target.value)}
-                                                                                        className="bg-transparent text-ritual-muted text-[10px] uppercase tracking-wider w-full outline-none border-b border-white/10 focus:border-ritual-accent placeholder-white/20"
-                                                                                        placeholder="NOMBRE"
-                                                                                    />
-                                                                                    <div className="flex items-center gap-1">
-                                                                                        <span className="text-ritual-accent">$</span>
+                                                                                    <div className="flex items-center gap-1 bg-white/5 px-3 py-1 rounded w-full justify-end">
+                                                                                        <span className="text-ritual-accent text-xs">$</span>
                                                                                         <input
                                                                                             type="number"
-                                                                                            value={v.price}
-                                                                                            onChange={(e) => updateVariant(cat.id, index, vIndex, 'price', e.target.value)}
-                                                                                            className="bg-transparent font-bold text-ritual-accent w-12 text-right outline-none border-b border-white/10 focus:border-ritual-accent"
+                                                                                            className="bg-transparent w-full text-right font-bold text-ritual-accent outline-none"
+                                                                                            value={item.price}
+                                                                                            onChange={(e) => updateItem(cat.id, index, 'price', e.target.value)}
                                                                                         />
-                                                                                        <button onClick={() => removeVariant(cat.id, index, vIndex)} className="text-red-400 hover:text-red-300 ml-1">
-                                                                                            <LucideIcon name="Trash2" size={12} />
-                                                                                        </button>
                                                                                     </div>
+                                                                                    <button
+                                                                                        onClick={() => addVariant(cat.id, index)}
+                                                                                        className="text-[9px] text-ritual-muted hover:text-ritual-accent mt-1 transition-colors uppercase tracking-wider"
+                                                                                    >
+                                                                                        + Crear Variantes
+                                                                                    </button>
                                                                                 </>
                                                                             ) : (
-                                                                                <>
-                                                                                    <span className="text-ritual-muted truncate text-[10px] uppercase tracking-wider">{v.name}</span>
-                                                                                    <span className="font-bold text-ritual-accent whitespace-nowrap ml-2">${v.price}</span>
-                                                                                </>
+                                                                                item.price > 0 && (
+                                                                                    <div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center">
+                                                                                        <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span>
+                                                                                        <span className="text-base font-bold text-ritual-accent">${item.price}</span>
+                                                                                    </div>
+                                                                                )
                                                                             )}
                                                                         </div>
-                                                                    ))
-                                                                ) : (
-                                                                    <div className="flex flex-col items-end w-full">
-                                                                        {isAdmin ? (
-                                                                            <>
-                                                                                <div className="flex items-center gap-1 bg-white/5 px-3 py-1 rounded w-full justify-end">
-                                                                                    <span className="text-ritual-accent text-xs">$</span>
-                                                                                    <input
-                                                                                        type="number"
-                                                                                        className="bg-transparent w-full text-right font-bold text-ritual-accent outline-none"
-                                                                                        value={item.price}
-                                                                                        onChange={(e) => updateItem(cat.id, index, 'price', e.target.value)}
-                                                                                    />
-                                                                                </div>
-                                                                                <button
-                                                                                    onClick={() => addVariant(cat.id, index)}
-                                                                                    className="text-[9px] text-ritual-muted hover:text-ritual-accent mt-1 transition-colors uppercase tracking-wider"
-                                                                                >
-                                                                                    + Crear Variantes
-                                                                                </button>
-                                                                            </>
-                                                                        ) : (
-                                                                            item.price > 0 && (
-                                                                                <div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center">
-                                                                                    <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span>
-                                                                                    <span className="text-base font-bold text-ritual-accent">${item.price}</span>
-                                                                                </div>
-                                                                            )
-                                                                        )}
-                                                                    </div>
-                                                                )}
-                                                                {/* Botón Agregar Variante si ya existen variantes */}
-                                                                {isAdmin && item.variants && (
-                                                                    <button
-                                                                        onClick={() => addVariant(cat.id, index)}
-                                                                        className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"
-                                                                    >
-                                                                        + Agregar Sub-Producto
-                                                                    </button>
-                                                                )}
+                                                                    )}
+                                                                    {/* Botón Agregar Variante si ya existen variantes */}
+                                                                    {isAdmin && item.variants && (
+                                                                        <button
+                                                                            onClick={() => addVariant(cat.id, index)}
+                                                                            className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"
+                                                                        >
+                                                                            + Agregar Sub-Producto
+                                                                        </button>
+                                                                    )}
+                                                                </div>
                                                             </div>
                                                         </div>
-                                                    </div>
-                                                ))}
+                                                    ))}
 
-                                                {isAdmin && (
-                                                    <button
-                                                        onClick={() => addItem(cat.id)}
-                                                        className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"
-                                                    >
-                                                        <LucideIcon name="Plus" size={16} /> Agregar Plato
-                                                    </button>
-                                                )}
+                                                    {isAdmin && (
+                                                        <button
+                                                            onClick={() => addItem(cat.id)}
+                                                            className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"
+                                                        >
+                                                            <LucideIcon name="Plus" size={16} /> Agregar Plato
+                                                        </button>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
-                                    )}
+                                    </div>
                                 </div>
                             )))}
 
