@@ -133,7 +133,7 @@
 
         const appId = 'ritual-bar-app';
         let app, db, auth, storage;
-        let isDemoMode = true;
+        let isDemoMode = true; // Se desactivará al conectar
 
         // Estado Global Explicito
         window.firebaseStatus = 'initializing'; // 'connected', 'disconnected', 'error'
@@ -142,49 +142,69 @@
         // --- 2. DATOS SEMILLA ---
         const seedData = window.rawSeedData || { categories: [] };
 
-        // --- FUNCIÓN DE ORDENAMIENTO AVANZADA ---
+        // --- FUNCIÓN DE ORDENAMIENTO DINÁMICA ---
         window.sortCategories = (data) => {
             if (!data || !data.categories) return data;
             const sortedData = { ...data };
-            
+
+            // Leer configuración de ordenamiento del objeto de datos (o usar defaults)
+            // productSort options: 'price-desc', 'price-asc', 'alpha', 'variants-max', 'variants-min'
+            // variantSort options: 'price-asc', 'price-desc', 'alpha'
+            const pSort = data.productSort || 'price-desc'; 
+            const vSort = data.variantSort || 'price-asc';
+
             sortedData.categories = sortedData.categories.map(cat => {
                 if (!cat.items) return cat;
 
-                // 1. Clonamos los items para no mutar referencias originales
+                // 1. Clonamos items
                 let processedItems = cat.items.map(item => {
                     let newItem = { ...item };
                     
-                    // A. Ordenar Variantes (Sub-productos): Del MÁS BARATO al MÁS CARO
+                    // A. ORDENAR VARIANTES
                     if (newItem.variants && newItem.variants.length > 0) {
-                        newItem.variants = [...newItem.variants].sort((a, b) => a.price - b.price);
+                        newItem.variants = [...newItem.variants].sort((a, b) => {
+                            if (vSort === 'price-asc') return a.price - b.price;
+                            if (vSort === 'price-desc') return b.price - a.price;
+                            if (vSort === 'alpha') return a.name.localeCompare(b.name);
+                            return 0;
+                        });
                     }
                     return newItem;
                 });
 
-                // 2. Ordenar Productos en la Categoría: Del MÁS CARO al MÁS BARATO
+                // 2. ORDENAR PRODUCTOS
                 processedItems.sort((a, b) => {
-                    // Si tiene variantes, usamos el precio MÁXIMO para el ranking de la categoría
-                    const maxPriceA = a.variants && a.variants.length > 0 
-                        ? Math.max(...a.variants.map(v => v.price)) 
-                        : a.price;
-                    
-                    const maxPriceB = b.variants && b.variants.length > 0 
-                        ? Math.max(...b.variants.map(v => v.price)) 
-                        : b.price;
+                    // Precios de referencia (usamos el mínimo si hay variantes)
+                    const priceA = a.variants && a.variants.length > 0 
+                        ? Math.min(...a.variants.map(v => v.price)) : a.price;
+                    const priceB = b.variants && b.variants.length > 0 
+                        ? Math.min(...b.variants.map(v => v.price)) : b.price;
 
-                    // Orden descendente (Mayor a menor)
-                    return maxPriceB - maxPriceA; 
-                });
+                    // Cantidad de variantes
+                    const varsA = a.variants ? a.variants.length : 0;
+                    const varsB = b.variants ? b.variants.length : 0;
 
-                // 3. Orden secundario por nombre (si los precios son iguales)
-                processedItems.sort((a, b) => {
-                    const maxPriceA = a.variants && a.variants.length > 0 ? Math.max(...a.variants.map(v => v.price)) : a.price;
-                    const maxPriceB = b.variants && b.variants.length > 0 ? Math.max(...b.variants.map(v => v.price)) : b.price;
-                    
-                    if (maxPriceA === maxPriceB) {
-                        return a.name.localeCompare(b.name);
+                    switch (pSort) {
+                        case 'price-desc': // Caro a Barato
+                            if (priceA !== priceB) return priceB - priceA;
+                            break;
+                        case 'price-asc': // Barato a Caro
+                            if (priceA !== priceB) return priceA - priceB;
+                            break;
+                        case 'alpha': // A-Z
+                            return a.name.localeCompare(b.name);
+                        case 'variants-max': // Con más opciones primero
+                            if (varsA !== varsB) return varsB - varsA;
+                            break;
+                        case 'variants-min': // Productos simples primero
+                            if (varsA !== varsB) return varsA - varsB;
+                            break;
+                        default:
+                            return priceB - priceA;
                     }
-                    return 0; // Ya está ordenado por precio
+                    
+                    // Fallback alfabético siempre
+                    return a.name.localeCompare(b.name);
                 });
 
                 return { ...cat, items: processedItems };
@@ -193,14 +213,11 @@
             return sortedData;
         };
 
-        window.seedData = window.sortCategories(seedData);
-
         // --- DEFINICIÓN DE HELPERS (Antes de initFirebase) ---
 
         // Helper: Fetch Menu
         window.fetchMenu = async () => {
-            // Siempre devolver datos ordenados, incluso en modo demo
-            if (isDemoMode || !db) return window.sortCategories(seedData);
+            if (!db) return null; // No devolver nada si no hay DB (Strict Mode)
 
             const docRef = doc(db, 'artifacts', appId, 'public', 'menu');
 
@@ -208,28 +225,27 @@
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
-                    
                     if (cloudData && cloudData.categories && cloudData.categories.length > 0) {
                         return window.sortCategories(cloudData);
-                    } else {
-                        return window.sortCategories(seedData);
                     }
                 } else {
-                    console.log("Creando menú inicial...");
-                    await setDoc(docRef, seedData);
-                    return window.sortCategories(seedData);
+                    // Solo si estamos conectados y NO existe, creamos el inicial
+                    if (window.firebaseStatus === 'connected') {
+                        console.log("Creando menú inicial...");
+                        await setDoc(docRef, seedData);
+                        return window.sortCategories(seedData);
+                    }
                 }
             } catch (err) {
-                console.warn("Error obteniendo menú (usando local):", err);
-                return window.sortCategories(seedData);
+                console.warn("Error obteniendo menú:", err);
             }
+            return null; // Si falla, devolvemos null para mostrar Loading/Error
         };
 
         // Helper: Guardar
         window.saveMenuToDB = async (data) => {
             if (window.firebaseStatus !== 'connected' || !db) {
-                console.warn(`Modo Demo/Offline: No se guardan cambios.`);
-                alert(`Error: No hay conexión a la base de datos (${window.firebaseStatus}). Revise su conexión.`);
+                alert(`Error: No hay conexión a la base de datos. No se puede guardar.`);
                 return false;
             }
             try {
@@ -251,12 +267,8 @@
             window.firebaseStatus = status;
             if (status === 'connected') {
                 isDemoMode = false;
-                window.dbInstance = db; // Exponer DB
-            } else {
-                isDemoMode = true;
+                window.dbInstance = db; 
             }
-
-            // Notificar a React si existe el listener
             if (window.onFirebaseStatusChange) {
                 window.onFirebaseStatusChange(status);
             }
@@ -274,22 +286,17 @@
                 onAuthStateChanged(auth, (user) => {
                     if (user) {
                         updateStatus('connected');
-                        console.log("Conectado como:", user.uid);
                     } else {
-                        console.log("Usuario desconectado, intentando anónimo...");
                         signInAnonymously(auth).catch(e => {
                             updateStatus('error', e);
-                            console.error("Fallo auth anónima:", e);
                         });
                     }
                 });
             } catch (e) {
                 updateStatus('error', e);
-                console.error("Fallo init Firebase:", e);
             }
         };
 
-        // Ejecutar inicialización sin bloquear el resto del script
         initFirebase();
 
     </script>
@@ -318,15 +325,10 @@
 
         // --- LISTA DE ICONOS AMPLIADA ---
         const AVAILABLE_ICONS = [
-            // Básicos
             'UtensilsCrossed', 'Utensils', 'ChefHat',
-            // Bebidas / Fiesta
             'Martini', 'Wine', 'Beer', 'GlassWater', 'CupSoda', 'PartyPopper', 'Music', 'Disc',
-            // Comida
             'Pizza', 'Sandwich', 'Soup', 'Beef', 'Fish', 'Croissant', 'Cookie', 'Cake', 'IceCream', 'Popcorn', 'Nut', 'Salad', 'Egg',
-            // Ingredientes / Frutas / Naturaleza
             'Apple', 'Banana', 'Cherry', 'Grape', 'Citrus', 'Carrot', 'Leaf', 'Wheat', 'Flower', 'Palmtree', 'Vegan', 'Milk', 'Flame', 'Snowflake', 'Droplet',
-            // Laboratorio / Café
             'Coffee', 'FlaskConical', 'FlaskRound', 'Beaker', 'TestTube', 'Anchor', 'Cloud'
         ];
 
@@ -346,7 +348,6 @@
             const [useFallback, setUseFallback] = useState(false);
 
             useEffect(() => {
-                // Si estamos en modo fallback, esperar y terminar
                 if (useFallback) {
                     const t1 = setTimeout(() => setParams({ opacity: 0 }), 2500);
                     const t2 = setTimeout(onComplete, 3200);
@@ -367,25 +368,21 @@
                         canvas.width = width;
                         canvas.height = height;
 
-                        // Estado inicial de partículas (dispersas)
                         particles = data.particles.map(p => ({
                             ...p,
-                            currX: Math.random() * window.innerWidth - window.innerWidth / 2, // Muy dispersas en X
-                            currY: Math.random() * window.innerHeight - window.innerHeight / 2, // Muy dispersas en Y
+                            currX: Math.random() * window.innerWidth - window.innerWidth / 2,
+                            currY: Math.random() * window.innerHeight - window.innerHeight / 2,
                             vx: 0,
                             vy: 0
                         }));
 
                         animate();
-
-                        // Iniciar secuencia de salida después de un tiempo
                         setTimeout(() => {
                             setParams({ opacity: 0 });
                             setTimeout(onComplete, 800);
-                        }, 3500); // Duración total de la intro
+                        }, 3500);
 
                     } catch (e) {
-                        console.warn("Fallo carga de partículas (posible CORS por file://). Usando fallback CSS.");
                         setUseFallback(true);
                     }
                 };
@@ -393,53 +390,28 @@
                 const animate = () => {
                     if (!ctx) return;
                     ctx.clearRect(0, 0, width, height);
-
-                    let allSettled = true; // Flag para saber si ya se formó
-
                     particles.forEach(p => {
-                        // Dinámica simple de atracción al punto objetivo (x, y)
                         const dx = p.x - p.currX;
                         const dy = p.y - p.currY;
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-
-                        // Velocidad proporcional a la distancia (easing)
-                        p.vx = (p.vx + dx * 0.05) * 0.85; // Spring force + friction
+                        p.vx = (p.vx + dx * 0.05) * 0.85; 
                         p.vy = (p.vy + dy * 0.05) * 0.85;
-
                         p.currX += p.vx;
                         p.currY += p.vy;
-
-                        // Dibujar
                         ctx.fillStyle = p.color;
-                        ctx.fillRect(p.currX, p.currY, 1, 1); // 1x1 pixel particles
-
-                        if (dist > 0.5) allSettled = false;
+                        ctx.fillRect(p.currX, p.currY, 1, 1);
                     });
-
-                    // Si ya se formó casi todo, detener (opcional, pero mejor dejar loop para estabilidad)
                     animationFrameId = requestAnimationFrame(animate);
                 };
 
-                // Intentar iniciar animación de partículas
                 initAnimation();
-
-                return () => {
-                    if (animationFrameId) cancelAnimationFrame(animationFrameId);
-                };
+                return () => { if (animationFrameId) cancelAnimationFrame(animationFrameId); };
             }, [onComplete, useFallback]);
 
             return (
-                <div
-                    className="fixed inset-0 bg-black z-[100] flex items-center justify-center transition-opacity duration-700 ease-out"
-                    style={{ opacity: params.opacity }}
-                >
+                <div className="fixed inset-0 bg-black z-[100] flex items-center justify-center transition-opacity duration-700 ease-out" style={{ opacity: params.opacity }}>
                     {useFallback ? (
                         <div className="animate-fadeIn transition-transform duration-1000 hover:scale-105">
-                            <img
-                                src="./logo_new.png"
-                                className="w-64 md:w-80 h-auto object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.3)] animate-pulse-slow"
-                                alt="El Barcito"
-                            />
+                            <img src="./logo_new.png" className="w-64 md:w-80 h-auto object-contain drop-shadow-[0_0_15px_rgba(255,255,255,0.3)] animate-pulse-slow" alt="El Barcito" />
                         </div>
                     ) : (
                         <canvas ref={canvasRef} className="scale-125 md:scale-150" />
@@ -450,7 +422,7 @@
 
         const App = () => {
             const [showSplash, setShowSplash] = useState(true);
-            const [menuData, setMenuData] = useState(window.seedData); // Init inmediato para evitar parpadeo post-splash
+            const [menuData, setMenuData] = useState(null); // NULL inicial para no mostrar datos
             const [loading, setLoading] = useState(true);
             const [activeCategory, setActiveCategory] = useState(null);
 
@@ -459,75 +431,31 @@
             const [showLogin, setShowLogin] = useState(false);
             const [password, setPassword] = useState("");
             const [showThemeSelector, setShowThemeSelector] = useState(false);
+            const [showSortSelector, setShowSortSelector] = useState(false);
             const [editingIconCategory, setEditingIconCategory] = useState(null);
 
-            // Estado de Conexión
             const [dbStatus, setDbStatus] = useState(window.firebaseStatus || 'initializing');
-
-            // Estado de Guardado
             const [isSaving, setIsSaving] = useState(false);
 
-            // Estados para Imagenes
             const [showCropModal, setShowCropModal] = useState(false);
             const [cropImageSrc, setCropImageSrc] = useState(null);
             const [editingItemCoords, setEditingItemCoords] = useState(null);
             const cropperRef = useRef(null);
             const imageElementRef = useRef(null);
 
-            // Hook de Carga Inicial con Timeout de Seguridad
+            // Fetch inicial
             useEffect(() => {
                 let isMounted = true;
-
-                const loadData = async () => {
-                    // Promesa de timeout: si Firebase tarda más de 4s, resolvemos con 'timeout'
-                    const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve('timeout'), 4000));
-
-                    try {
-                        let data;
-                        if (window.fetchMenu) {
-                            // Carrera entre la carga real y el timeout
-                            const result = await Promise.race([window.fetchMenu(), timeoutPromise]);
-
-                            if (result === 'timeout') {
-                                console.warn("Firebase tardó mucho, usando datos locales.");
-                                data = window.seedData;
-                            } else {
-                                data = result;
-                            }
-                        } else {
-                            data = window.seedData;
-                        }
-
-                        if (isMounted) {
-                            // Aseguramos que siempre haya datos
-                            setMenuData(data || window.seedData);
-                            setLoading(false);
-                        }
-                    } catch (error) {
-                        console.error("Error cargando datos:", error);
-                        if (isMounted) {
-                            setMenuData(window.seedData);
-                            setLoading(false);
-                        }
-                    }
-                };
-
-                // Suscribirse a cambios de estado de Firebase
                 window.onFirebaseStatusChange = (status) => {
                     if (isMounted) setDbStatus(status);
                 };
-
-                // Carga inicial
-                loadData();
-
                 return () => { isMounted = false; };
             }, []);
 
-            // Efecto: Re-cargar datos cuando nos conectamos
+            // Efecto: Cargar SOLO cuando DB conectada
             useEffect(() => {
                 if (dbStatus === 'connected') {
-                    console.log("Detectada conexión a DB, refrescando datos...");
-                    // Re-utilizamos la lógica de fetchMenu que ahora usará la DB
+                    setLoading(true);
                     window.fetchMenu().then(data => {
                         setMenuData(data);
                         setLoading(false);
@@ -547,7 +475,7 @@
                 }
             }, [menuData]);
 
-            // --- Lógica de Recorte ---
+            // ... (Lógica de Cropper igual) ...
             useEffect(() => {
                 if (showCropModal && cropImageSrc && imageElementRef.current) {
                     if (cropperRef.current) cropperRef.current.destroy();
@@ -566,88 +494,39 @@
                 const file = e.target.files[0];
                 if (file) {
                     const reader = new FileReader();
-                    reader.onload = () => {
-                        setCropImageSrc(reader.result);
-                        setEditingItemCoords({ catId, index });
-                        setShowCropModal(true);
-                        e.target.value = '';
-                    };
+                    reader.onload = () => { setCropImageSrc(reader.result); setEditingItemCoords({ catId, index }); setShowCropModal(true); e.target.value = ''; };
                     reader.readAsDataURL(file);
                 }
             };
 
             const performCrop = async () => {
                 if (!cropperRef.current || !editingItemCoords) return;
-
-                setIsSaving(true); // Mostrar feedback visual
-
+                setIsSaving(true);
                 try {
-                    const canvas = cropperRef.current.getCroppedCanvas({
-                        width: 350, height: 350, // Resolución optimizada para móvil
-                        imageSmoothingEnabled: true, imageSmoothingQuality: 'high',
-                    });
-
-                    // Obtener URL Base64 directa (comprimida)
-                    // Calidad 0.7 reduce significativamente el tamaño sin perder mucha calidad visual
+                    const canvas = cropperRef.current.getCroppedCanvas({ width: 350, height: 350, imageSmoothingEnabled: true, imageSmoothingQuality: 'high' });
                     const imageUrl = canvas.toDataURL('image/jpeg', 0.7);
-
-                    if (!imageUrl) {
-                        setIsSaving(false);
-                        return;
-                    }
-
                     const { catId, index } = editingItemCoords;
                     updateItem(catId, index, 'image', imageUrl);
-
-                    // Cleanup
-                    setShowCropModal(false);
-                    setCropImageSrc(null);
-                    setEditingItemCoords(null);
-                    setIsSaving(false);
-
-                    // Destroy canvas manually if needed (browsers handle this but good practice)
-                    canvas.remove();
-
-                } catch (error) {
-                    console.error("Error en recorte:", error);
-                    setIsSaving(false);
-                }
+                    setShowCropModal(false); setCropImageSrc(null); setEditingItemCoords(null); setIsSaving(false); canvas.remove();
+                } catch (error) { console.error(error); setIsSaving(false); }
             };
 
-            // --- MANEJADORES ---
             const toggleCategory = (id) => setActiveCategory(activeCategory === id ? null : id);
 
             const handleLogin = (e) => {
                 e.preventDefault();
-                if (password === "admin123") {
-                    setIsAdmin(true);
-                    setShowLogin(false);
-                    setPassword("");
-                } else {
-                    alert("Contraseña incorrecta");
-                }
+                if (password === "admin123") { setIsAdmin(true); setShowLogin(false); setPassword(""); } 
+                else { alert("Contraseña incorrecta"); }
             };
 
             const saveChanges = async (newDataRaw) => {
-                // LÓGICA DE ESTABILIDAD:
-                // Si somos Admin, NO reordenamos la vista local automáticamente al editar.
-                // Esto evita que los platos "salten" de lugar mientras escribes precios.
-                // Sin embargo, generamos una versión ordenada para guardar en la BD,
-                // así los clientes siempre ven el menú ordenado por precio.
-
                 let dataForState = newDataRaw;
-                
-                // Siempre calculamos la versión ordenada para la base de datos
                 const dataForDB = window.sortCategories(newDataRaw);
 
-                if (!isAdmin) {
-                    // Si no fueramos admin (caso hipotético), actualizamos el estado con el orden
-                    dataForState = dataForDB;
-                }
+                // Admin ve edición estable, cliente ve ordenado
+                if (!isAdmin) dataForState = dataForDB;
 
-                // Actualizamos el estado local (si es admin, se mantiene el orden visual actual)
                 setMenuData(dataForState);
-                
                 setIsSaving(true);
                 if (window.saveMenuToDB) {
                     await window.saveMenuToDB(dataForDB);
@@ -656,197 +535,71 @@
             };
 
             const resetDatabase = async () => {
-                const confirmMsg = "⚠️ ¿PELIGRO: Estás seguro de REINICIAR toda la base de datos?\n\nEsto borrará los datos actuales de la nube y los sobrescribirá con los datos locales originales del archivo menu_data.js.\n\nEsta acción NO se puede deshacer.";
-                if (!confirm(confirmMsg)) return;
-
+                if (!confirm("⚠️ ¿PELIGRO: Reiniciar BD?")) return;
                 setIsSaving(true);
-                // Usamos window.sortCategories(window.rawSeedData) para asegurar que subimos la versión limpia del archivo
                 const cleanData = window.sortCategories(window.rawSeedData || window.seedData);
-
                 if (window.saveMenuToDB) {
                     const success = await window.saveMenuToDB(cleanData);
-                    if (success) {
-                        setMenuData(cleanData);
-                        alert("✅ Base de datos reiniciada correctamente con los datos locales.");
-                    }
-                } else {
-                    alert("Error: Función de guardado no disponible.");
+                    if (success) { setMenuData(cleanData); alert("✅ BD Reiniciada."); }
                 }
                 setIsSaving(false);
             };
 
-            // HELPER: Deep Copy para evitar mutaciones de estado
             const getCleanData = () => structuredClone(menuData);
-
-            const updateItem = (catId, index, field, value) => {
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                if (field === 'price') value = Number(value);
-                newData.categories[catIndex].items[index][field] = value;
-                saveChanges(newData);
-            };
-
-            const updateVariant = (catId, itemIndex, variantIndex, field, value) => {
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                if (field === 'price') value = Number(value);
-                newData.categories[catIndex].items[itemIndex].variants[variantIndex][field] = value;
-                saveChanges(newData);
-            };
-
-            const addVariant = (catId, itemIndex) => {
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                const item = newData.categories[catIndex].items[itemIndex];
-
-                if (!item.variants) {
-                    item.variants = [
-                        { name: "Estándar", price: item.price || 0 },
-                        { name: "Nuevo", price: 0 }
-                    ];
-                    item.price = 0;
-                } else {
-                    item.variants.push({ name: "Nuevo", price: 0 });
-                }
-                saveChanges(newData);
-            };
-
-            const removeVariant = (catId, itemIndex, variantIndex) => {
-                if (!confirm("¿Eliminar este sub-producto?")) return;
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                const item = newData.categories[catIndex].items[itemIndex];
-
-                item.variants.splice(variantIndex, 1);
-
-                if (item.variants.length === 0) {
-                    delete item.variants;
-                    item.price = 0;
-                }
-                saveChanges(newData);
-            };
-
-            const removeItemImage = (catId, index) => {
-                if (!confirm("¿Eliminar imagen del plato?")) return;
-                updateItem(catId, index, 'image', null);
-            };
-
-            const deleteItem = (catId, index) => {
-                if (!confirm("¿Estás seguro de borrar este plato?")) return;
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                newData.categories[catIndex].items.splice(index, 1);
-                saveChanges(newData);
-            };
-
-            const addItem = (catId) => {
-                const name = prompt("Nombre del nuevo plato:");
-                if (!name) return;
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                // Ensure items array exists
-                if (!newData.categories[catIndex].items) newData.categories[catIndex].items = [];
-
-                newData.categories[catIndex].items.push({
-                    name,
-                    desc: "Descripción nueva",
-                    price: 0,
-                    image: null,
-                    variants: null
-                });
-                saveChanges(newData);
-            };
-
-            const toggleCatVisibility = (catId) => {
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                newData.categories[catIndex].visible = !newData.categories[catIndex].visible;
-                saveChanges(newData);
-            };
-
-            const updateCategoryName = (catId, newName) => {
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === catId);
-                newData.categories[catIndex].name = newName;
-                saveChanges(newData);
-            };
-
-            const updateCategoryIcon = (iconName) => {
-                if (!editingIconCategory) return;
-                const newData = getCleanData();
-                const catIndex = newData.categories.findIndex(c => c.id === editingIconCategory);
-                newData.categories[catIndex].icon = iconName;
-                saveChanges(newData);
-                setEditingIconCategory(null);
-            };
-
-            const addCategory = () => {
-                const newData = getCleanData();
-                const newId = `cat-${Date.now()}`;
-                const newCat = {
-                    id: newId,
-                    name: 'NUEVA CATEGORÍA',
-                    icon: 'Utensils',
-                    visible: true, // Default visible to avoid consistency confusion
-                    items: []
-                };
-                newData.categories.push(newCat);
-                saveChanges(newData);
-            };
-
-            const deleteCategory = (catId) => {
-                if (!confirm("¿Estás seguro de eliminar toda esta categoría y sus platos?")) return;
-                const newData = getCleanData();
-                newData.categories = newData.categories.filter(c => c.id !== catId);
-                saveChanges(newData);
-            };
-
-            // FUNCIÓN: Mover Categoría
+            const updateItem = (catId, index, field, value) => { const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); if (field === 'price') value = Number(value); n.categories[ci].items[index][field] = value; saveChanges(n); };
+            const updateVariant = (catId, iIdx, vIdx, field, value) => { const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); if (field === 'price') value = Number(value); n.categories[ci].items[iIdx].variants[vIdx][field] = value; saveChanges(n); };
+            const addVariant = (catId, iIdx) => { const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); const item = n.categories[ci].items[iIdx]; if (!item.variants) { item.variants = [{ name: "Estándar", price: item.price || 0 }, { name: "Nuevo", price: 0 }]; item.price = 0; } else { item.variants.push({ name: "Nuevo", price: 0 }); } saveChanges(n); };
+            const removeVariant = (catId, iIdx, vIdx) => { if (!confirm("¿Borrar variante?")) return; const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); const item = n.categories[ci].items[iIdx]; item.variants.splice(vIdx, 1); if (item.variants.length === 0) { delete item.variants; item.price = 0; } saveChanges(n); };
+            const removeItemImage = (catId, index) => { if (!confirm("¿Borrar imagen?")) return; updateItem(catId, index, 'image', null); };
+            const deleteItem = (catId, index) => { if (!confirm("¿Borrar plato?")) return; const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); n.categories[ci].items.splice(index, 1); saveChanges(n); };
+            const addItem = (catId) => { const name = prompt("Nombre:"); if (!name) return; const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); if (!n.categories[ci].items) n.categories[ci].items = []; n.categories[ci].items.push({ name, desc: "Nueva descripción", price: 0, image: null, variants: null }); saveChanges(n); };
+            const toggleCatVisibility = (catId) => { const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); n.categories[ci].visible = !n.categories[ci].visible; saveChanges(n); };
+            const updateCategoryName = (catId, newName) => { const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === catId); n.categories[ci].name = newName; saveChanges(n); };
+            const updateCategoryIcon = (iconName) => { if (!editingIconCategory) return; const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === editingIconCategory); n.categories[ci].icon = iconName; saveChanges(n); setEditingIconCategory(null); };
+            const addCategory = () => { const n = getCleanData(); n.categories.push({ id: `cat-${Date.now()}`, name: 'NUEVA CATEGORÍA', icon: 'Utensils', visible: true, items: [] }); saveChanges(n); };
+            const deleteCategory = (catId) => { if (!confirm("¿Borrar categoría completa?")) return; const n = getCleanData(); n.categories = n.categories.filter(c => c.id !== catId); saveChanges(n); };
+            
             const moveCategory = (index, direction, e) => {
-                e.stopPropagation(); // Evitar colapsar/expandir al hacer click
-                const newData = getCleanData();
-                
-                if (direction === -1 && index > 0) {
-                    // Mover Arriba
-                    const temp = newData.categories[index];
-                    newData.categories[index] = newData.categories[index - 1];
-                    newData.categories[index - 1] = temp;
-                } else if (direction === 1 && index < newData.categories.length - 1) {
-                    // Mover Abajo
-                    const temp = newData.categories[index];
-                    newData.categories[index] = newData.categories[index + 1];
-                    newData.categories[index + 1] = temp;
-                } else {
-                    return; // Movimiento no válido
-                }
-                
-                saveChanges(newData);
+                e.stopPropagation(); const n = getCleanData();
+                if (direction === -1 && index > 0) { const t = n.categories[index]; n.categories[index] = n.categories[index - 1]; n.categories[index - 1] = t; } 
+                else if (direction === 1 && index < n.categories.length - 1) { const t = n.categories[index]; n.categories[index] = n.categories[index + 1]; n.categories[index + 1] = t; } 
+                else return;
+                saveChanges(n);
             };
 
-            const changeTheme = (themeId) => {
-                const newData = getCleanData();
-                newData.theme = themeId;
-                saveChanges(newData);
+            const changeTheme = (themeId) => { const n = getCleanData(); n.theme = themeId; saveChanges(n); };
+            
+            // Nueva función: Cambiar criterio de orden
+            const changeSort = (type, value) => {
+                const n = getCleanData();
+                if (type === 'product') n.productSort = value;
+                if (type === 'variant') n.variantSort = value;
+                // Al cambiar el orden, se aplica inmediatamente para todos (incluido admin)
+                // porque es un cambio estructural, no de edición de contenido
+                setMenuData(window.sortCategories(n));
+                window.saveMenuToDB(window.sortCategories(n));
             };
 
-            const handleSplashComplete = useCallback(() => {
-                setShowSplash(false);
-            }, []);
+            const handleSplashComplete = useCallback(() => { setShowSplash(false); }, []);
 
-            if (showSplash) {
-                return <SplashScreen onComplete={handleSplashComplete} />;
-            }
+            if (showSplash) return <SplashScreen onComplete={handleSplashComplete} />;
 
-            if (loading) return (
-                <div className="flex items-center justify-center h-screen bg-ritual-bg text-ritual-accent">
-                    <div className="flex flex-col items-center gap-4">
-                        <LucideIcon name="Loader2" className="animate-spin" size={48} />
-                        <span className="uppercase tracking-widest text-xs">Cargando Experiencia...</span>
+            // --- BLOQUEO DE INTERFAZ SI OFFLINE ---
+            if (dbStatus !== 'connected' || loading || !menuData) return (
+                <div className="flex items-center justify-center h-screen bg-ritual-bg text-ritual-accent transition-colors duration-700">
+                    <div className="flex flex-col items-center gap-6">
+                        <LucideIcon name="Wifi" className={`animate-pulse ${dbStatus === 'error' ? 'text-red-500' : 'text-ritual-accent'}`} size={48} />
+                        <div className="text-center">
+                            <p className="uppercase tracking-widest text-sm font-bold mb-2">
+                                {dbStatus === 'error' ? 'Error de Conexión' : 'Conectando con el Menú...'}
+                            </p>
+                            <p className="text-xs text-ritual-muted opacity-70">
+                                {dbStatus === 'error' ? 'Verifique su internet' : 'Por favor espere un momento'}
+                            </p>
+                        </div>
                     </div>
                 </div>
             );
-
-            if (!menuData) return <div className="text-white p-10 text-center">No se pudieron cargar los datos.</div>;
 
             return (
                 <div className="max-w-md mx-auto min-h-screen bg-ritual-bg shadow-2xl relative pb-24 border-x border-ritual-card transition-colors duration-700">
@@ -855,12 +608,7 @@
                     <header className="p-6 text-center border-b border-ritual-accent/20 bg-ritual-bg transition-colors duration-700">
                         <div className="flex justify-center">
                             <div className="transition-transform duration-700 hover:scale-105 w-full flex justify-center">
-                                <img
-                                    src="./logo_new.png"
-                                    alt="El Barcito Logo"
-                                    className="h-36 w-auto max-w-full object-contain logo-glow"
-                                    onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/300x150?text=EL+BARCITO' }}
-                                />
+                                <img src="./logo_new.png" alt="El Barcito Logo" className="h-36 w-auto max-w-full object-contain logo-glow" onError={(e) => { e.target.onerror = null; e.target.src = 'https://placehold.co/300x150?text=EL+BARCITO' }} />
                             </div>
                         </div>
                     </header>
@@ -870,186 +618,79 @@
                         {menuData.categories.map((cat, catIndex) => (
                             (!cat.visible && !isAdmin) ? null : (
                                 <div key={cat.id} className={`rounded-lg overflow-hidden transition-all duration-300 ${activeCategory === cat.id ? 'bg-ritual-card shadow-lg ring-1 ring-ritual-accent/30 mb-4 scale-[1.02]' : 'bg-ritual-card/40 hover:bg-ritual-card/60'}`}>
-
-                                    {/* CABECERA DE CATEGORÍA */}
-                                    <div
-                                        className="p-5 flex items-center justify-between cursor-pointer select-none"
-                                        onClick={() => toggleCategory(cat.id)}
-                                    >
+                                    <div className="p-5 flex items-center justify-between cursor-pointer select-none" onClick={() => toggleCategory(cat.id)}>
                                         <div className="flex items-center gap-4 flex-1">
-                                            <div
-                                                onClick={(e) => {
-                                                    if (isAdmin) {
-                                                        e.stopPropagation();
-                                                        setEditingIconCategory(cat.id);
-                                                    }
-                                                }}
-                                                className={`p-2 rounded-md transition-colors relative group/icon ${activeCategory === cat.id ? 'bg-ritual-accent/20 text-ritual-accent' : 'bg-black/20 text-ritual-muted'} ${isAdmin ? 'hover:bg-ritual-accent/40 cursor-pointer' : ''} `}
-                                            >
+                                            <div onClick={(e) => { if (isAdmin) { e.stopPropagation(); setEditingIconCategory(cat.id); } }} className={`p-2 rounded-md transition-colors relative group/icon ${activeCategory === cat.id ? 'bg-ritual-accent/20 text-ritual-accent' : 'bg-black/20 text-ritual-muted'} ${isAdmin ? 'hover:bg-ritual-accent/40 cursor-pointer' : ''} `}>
                                                 <LucideIcon name={cat.icon} size={24} />
                                                 {isAdmin && <div className="absolute -top-1 -right-1 bg-ritual-accent text-white rounded-full p-0.5 transform scale-0 group-hover/icon:scale-100 transition-transform"><LucideIcon name="Pencil" size={10} /></div>}
                                             </div>
-
                                             {isAdmin ? (
                                                 <div className="flex-1" onClick={(e) => e.stopPropagation()}>
-                                                    <input
-                                                        value={cat.name}
-                                                        onChange={(e) => updateCategoryName(cat.id, e.target.value)}
-                                                        className="bg-transparent text-lg font-semibold tracking-wide uppercase text-ritual-text w-full outline-none border-b border-transparent focus:border-ritual-accent/50"
-                                                    />
+                                                    <input value={cat.name} onChange={(e) => updateCategoryName(cat.id, e.target.value)} className="bg-transparent text-lg font-semibold tracking-wide uppercase text-ritual-text w-full outline-none border-b border-transparent focus:border-ritual-accent/50" />
                                                 </div>
                                             ) : (
                                                 <h2 className={`text-lg font-semibold tracking-wide uppercase whitespace-normal leading-tight ${activeCategory === cat.id ? 'text-ritual-text' : 'text-ritual-text/80'} `}>{cat.name}</h2>
                                             )}
-
                                             {isAdmin && !cat.visible && <span className="text-[10px] uppercase font-bold tracking-wider bg-red-900/50 text-red-200 px-2 py-0.5 rounded border border-red-800">Oculto</span>}
                                         </div>
-
                                         <div className="flex items-center gap-3">
                                             {isAdmin && (
                                                 <div className="flex items-center gap-1 bg-black/20 rounded-full p-1 mr-2">
-                                                    
-                                                    {/* Botones de Reordenamiento */}
-                                                    <button 
-                                                        onClick={(e) => moveCategory(catIndex, -1, e)} 
-                                                        disabled={catIndex === 0}
-                                                        className={`p-1.5 rounded-full transition-colors ${catIndex === 0 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}
-                                                        title="Mover arriba"
-                                                    >
-                                                        <LucideIcon name="ChevronUp" size={14} />
-                                                    </button>
-                                                    <button 
-                                                        onClick={(e) => moveCategory(catIndex, 1, e)} 
-                                                        disabled={catIndex === menuData.categories.length - 1}
-                                                        className={`p-1.5 rounded-full transition-colors ${catIndex === menuData.categories.length - 1 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}
-                                                        title="Mover abajo"
-                                                    >
-                                                        <LucideIcon name="ChevronDown" size={14} />
-                                                    </button>
-
+                                                    <button onClick={(e) => moveCategory(catIndex, -1, e)} disabled={catIndex === 0} className={`p-1.5 rounded-full transition-colors ${catIndex === 0 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}><LucideIcon name="ChevronUp" size={14} /></button>
+                                                    <button onClick={(e) => moveCategory(catIndex, 1, e)} disabled={catIndex === menuData.categories.length - 1} className={`p-1.5 rounded-full transition-colors ${catIndex === menuData.categories.length - 1 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}><LucideIcon name="ChevronDown" size={14} /></button>
                                                     <div className="w-px h-4 bg-white/10 mx-1"></div>
-
-                                                    <button onClick={(e) => { e.stopPropagation(); toggleCatVisibility(cat.id) }} className="p-1.5 text-ritual-muted hover:text-ritual-text hover:bg-white/10 rounded-full transition-colors" title={cat.visible ? "Ocultar al público" : "Mostrar al público"}>
-                                                        <LucideIcon name={cat.visible ? "Eye" : "EyeOff"} size={16} />
-                                                    </button>
-                                                    <button onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id) }} className="p-1.5 text-red-400/50 hover:text-red-400 hover:bg-red-900/20 rounded-full transition-colors" title="Eliminar Categoría">
-                                                        <LucideIcon name="Trash2" size={16} />
-                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); toggleCatVisibility(cat.id) }} className="p-1.5 text-ritual-muted hover:text-ritual-text hover:bg-white/10 rounded-full transition-colors"><LucideIcon name={cat.visible ? "Eye" : "EyeOff"} size={16} /></button>
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id) }} className="p-1.5 text-red-400/50 hover:text-red-400 hover:bg-red-900/20 rounded-full transition-colors"><LucideIcon name="Trash2" size={16} /></button>
                                                 </div>
                                             )}
-                                            <LucideIcon
-                                                name="ChevronDown"
-                                                className={`text-ritual-muted transition-transform duration-300 ${activeCategory === cat.id ? 'rotate-180 text-ritual-accent' : ''} `}
-                                                size={20}
-                                            />
+                                            <LucideIcon name="ChevronDown" className={`text-ritual-muted transition-transform duration-300 ${activeCategory === cat.id ? 'rotate-180 text-ritual-accent' : ''} `} size={20} />
                                         </div>
                                     </div>
 
-                                    {/* LISTA DE PLATOS (Con Animación de Cierre) */}
-                                    <div 
-                                        className={`grid transition-[grid-template-rows,opacity] duration-500 ease-in-out ${activeCategory === cat.id ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}
-                                    >
+                                    {/* LISTA DE PLATOS */}
+                                    <div className={`grid transition-[grid-template-rows,opacity] duration-500 ease-in-out ${activeCategory === cat.id ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
                                         <div className="overflow-hidden">
-                                            <div 
-                                                className="border-t border-ritual-accent/10 bg-black/10 cursor-pointer"
-                                                onDoubleClick={(e) => {
-                                                    // Evitar cerrar si se está editando texto
-                                                    if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return;
-                                                    setActiveCategory(null);
-                                                }}
-                                                title="Doble click en el fondo para cerrar"
-                                            >
+                                            <div className="border-t border-ritual-accent/10 bg-black/10 cursor-pointer" onDoubleClick={(e) => { if (['INPUT', 'TEXTAREA'].includes(e.target.tagName)) return; setActiveCategory(null); }} title="Doble click en el fondo para cerrar">
                                                 <div className="p-4 space-y-4 cursor-auto">
                                                     {cat.items.map((item, index) => (
                                                         <div key={index} className="flex gap-4 group relative p-2 rounded-lg hover:bg-white/5 transition-colors">
-
                                                             {item.image && (
                                                                 <div className="w-32 h-32 shrink-0 rounded-lg overflow-hidden border border-ritual-muted/20 shadow-sm bg-black/20 self-center">
                                                                     <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
                                                                 </div>
                                                             )}
-
                                                             <div className="flex-1 flex flex-row items-center gap-3 py-1">
-
-                                                                {/* IZQUIERDA: Info del Producto */}
                                                                 <div className="flex-1 min-w-0 flex flex-col justify-center">
                                                                     <div className="flex flex-col">
-                                                                        {isAdmin ? (
-                                                                            <input
-                                                                                className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors"
-                                                                                value={item.name}
-                                                                                onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)}
-                                                                            />
-                                                                        ) : (
-                                                                            <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3>
-                                                                        )}
-
-                                                                        {isAdmin ? (
-                                                                            <textarea
-                                                                                className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors"
-                                                                                value={item.desc}
-                                                                                onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)}
-                                                                            />
-                                                                        ) : (
-                                                                            item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p>
-                                                                        )}
+                                                                        {isAdmin ? ( <input className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors" value={item.name} onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)} /> ) : ( <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3> )}
+                                                                        {isAdmin ? ( <textarea className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors" value={item.desc} onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)} /> ) : ( item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p> )}
                                                                     </div>
-
-                                                                    {/* Admin Actions */}
                                                                     {isAdmin && (
                                                                         <div className="flex items-center gap-2 mt-2">
                                                                             <label className="cursor-pointer text-ritual-muted hover:text-ritual-accent transition-colors p-1" title="Subir Foto">
-                                                                                <input
-                                                                                    type="file"
-                                                                                    accept="image/*"
-                                                                                    className="hidden"
-                                                                                    onChange={(e) => handleFileSelect(e, cat.id, index)}
-                                                                                />
+                                                                                <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, cat.id, index)} />
                                                                                 <LucideIcon name="Camera" size={14} />
                                                                             </label>
-                                                                            {item.image && (
-                                                                                <button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen">
-                                                                                    <LucideIcon name="ImageMinus" size={14} />
-                                                                                </button>
-                                                                            )}
-                                                                            <button onClick={() => deleteItem(cat.id, index)} className="text-red-500/50 hover:text-red-400 p-1" title="Eliminar plato">
-                                                                                <LucideIcon name="Trash2" size={14} />
-                                                                            </button>
+                                                                            {item.image && ( <button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen"><LucideIcon name="ImageMinus" size={14} /></button> )}
+                                                                            <button onClick={() => deleteItem(cat.id, index)} className="text-red-500/50 hover:text-red-400 p-1" title="Eliminar plato"><LucideIcon name="Trash2" size={14} /></button>
                                                                         </div>
                                                                     )}
                                                                 </div>
-
-                                                                {/* DERECHA: Precios (50% width, Stacked) */}
                                                                 <div className="w-1/2 flex flex-col gap-1 justify-center shrink-0">
                                                                     {item.variants ? (
                                                                         item.variants.map((v, vIndex) => (
                                                                             <div key={vIndex} className="flex justify-between items-center w-full bg-white/5 px-2 py-1 rounded text-xs gap-2 mb-1">
                                                                                 {isAdmin ? (
                                                                                     <>
-                                                                                        <input
-                                                                                            value={v.name}
-                                                                                            onChange={(e) => updateVariant(cat.id, index, vIndex, 'name', e.target.value)}
-                                                                                            className="bg-transparent text-ritual-muted text-[10px] uppercase tracking-wider w-full outline-none border-b border-white/10 focus:border-ritual-accent placeholder-white/20"
-                                                                                            placeholder="NOMBRE"
-                                                                                        />
+                                                                                        <input value={v.name} onChange={(e) => updateVariant(cat.id, index, vIndex, 'name', e.target.value)} className="bg-transparent text-ritual-muted text-[10px] uppercase tracking-wider w-full outline-none border-b border-white/10 focus:border-ritual-accent placeholder-white/20" placeholder="NOMBRE" />
                                                                                         <div className="flex items-center gap-1">
                                                                                             <span className="text-ritual-accent">$</span>
-                                                                                            <input
-                                                                                                type="number"
-                                                                                                value={v.price}
-                                                                                                onChange={(e) => updateVariant(cat.id, index, vIndex, 'price', e.target.value)}
-                                                                                                className="bg-transparent font-bold text-ritual-accent w-12 text-right outline-none border-b border-white/10 focus:border-ritual-accent"
-                                                                                            />
-                                                                                            <button onClick={() => removeVariant(cat.id, index, vIndex)} className="text-red-400 hover:text-red-300 ml-1">
-                                                                                                <LucideIcon name="Trash2" size={12} />
-                                                                                            </button>
+                                                                                            <input type="number" value={v.price} onChange={(e) => updateVariant(cat.id, index, vIndex, 'price', e.target.value)} className="bg-transparent font-bold text-ritual-accent w-12 text-right outline-none border-b border-white/10 focus:border-ritual-accent" />
+                                                                                            <button onClick={() => removeVariant(cat.id, index, vIndex)} className="text-red-400 hover:text-red-300 ml-1"><LucideIcon name="Trash2" size={12} /></button>
                                                                                         </div>
                                                                                     </>
                                                                                 ) : (
-                                                                                    <>
-                                                                                        <span className="text-ritual-muted truncate text-[10px] uppercase tracking-wider">{v.name}</span>
-                                                                                        <span className="font-bold text-ritual-accent whitespace-nowrap ml-2">${v.price}</span>
-                                                                                    </>
+                                                                                    <> <span className="text-ritual-muted truncate text-[10px] uppercase tracking-wider">{v.name}</span> <span className="font-bold text-ritual-accent whitespace-nowrap ml-2">${v.price}</span> </>
                                                                                 )}
                                                                             </div>
                                                                         ))
@@ -1059,222 +700,181 @@
                                                                                 <>
                                                                                     <div className="flex items-center gap-1 bg-white/5 px-3 py-1 rounded w-full justify-end">
                                                                                         <span className="text-ritual-accent text-xs">$</span>
-                                                                                        <input
-                                                                                            type="number"
-                                                                                            className="bg-transparent w-full text-right font-bold text-ritual-accent outline-none"
-                                                                                            value={item.price}
-                                                                                            onChange={(e) => updateItem(cat.id, index, 'price', e.target.value)}
-                                                                                        />
+                                                                                        <input type="number" className="bg-transparent w-full text-right font-bold text-ritual-accent outline-none" value={item.price} onChange={(e) => updateItem(cat.id, index, 'price', e.target.value)} />
                                                                                     </div>
-                                                                                    <button
-                                                                                        onClick={() => addVariant(cat.id, index)}
-                                                                                        className="text-[9px] text-ritual-muted hover:text-ritual-accent mt-1 transition-colors uppercase tracking-wider"
-                                                                                    >
-                                                                                        + Crear Variantes
-                                                                                    </button>
+                                                                                    <button onClick={() => addVariant(cat.id, index)} className="text-[9px] text-ritual-muted hover:text-ritual-accent mt-1 transition-colors uppercase tracking-wider"> + Crear Variantes </button>
                                                                                 </>
-                                                                            ) : (
-                                                                                item.price > 0 && (
-                                                                                    <div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center">
-                                                                                        <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span>
-                                                                                        <span className="text-base font-bold text-ritual-accent">${item.price}</span>
-                                                                                    </div>
-                                                                                )
-                                                                            )}
+                                                                            ) : ( item.price > 0 && ( <div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center"> <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span> <span className="text-base font-bold text-ritual-accent">${item.price}</span> </div> ) )}
                                                                         </div>
                                                                     )}
-                                                                    {/* Botón Agregar Variante si ya existen variantes */}
-                                                                    {isAdmin && item.variants && (
-                                                                        <button
-                                                                            onClick={() => addVariant(cat.id, index)}
-                                                                            className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"
-                                                                        >
-                                                                            + Agregar Sub-Producto
-                                                                        </button>
-                                                                    )}
+                                                                    {isAdmin && item.variants && ( <button onClick={() => addVariant(cat.id, index)} className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"> + Agregar Sub-Producto </button> )}
                                                                 </div>
                                                             </div>
                                                         </div>
                                                     ))}
-
-                                                    {isAdmin && (
-                                                        <button
-                                                            onClick={() => addItem(cat.id)}
-                                                            className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"
-                                                        >
-                                                            <LucideIcon name="Plus" size={16} /> Agregar Plato
-                                                        </button>
-                                                    )}
+                                                    {isAdmin && ( <button onClick={() => addItem(cat.id)} className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"> <LucideIcon name="Plus" size={16} /> Agregar Plato </button> )}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             )))}
-
-                        {isAdmin && (
-                            <button
-                                onClick={addCategory}
-                                className="w-full py-4 bg-ritual-card border border-ritual-accent/30 text-ritual-accent rounded-lg hover:bg-ritual-accent hover:text-white transition-all flex items-center justify-center gap-3 shadow-lg uppercase tracking-widest font-bold mt-6"
-                            >
-                                <LucideIcon name="FolderPlus" size={20} /> Nueva Categoría
-                            </button>
-                        )}
+                        {isAdmin && ( <button onClick={addCategory} className="w-full py-4 bg-ritual-card border border-ritual-accent/30 text-ritual-accent rounded-lg hover:bg-ritual-accent hover:text-white transition-all flex items-center justify-center gap-3 shadow-lg uppercase tracking-widest font-bold mt-6"> <LucideIcon name="FolderPlus" size={20} /> Nueva Categoría </button> )}
                     </main>
 
                     {/* FOOTER */}
                     <footer className="mt-12 py-8 text-center text-ritual-muted text-[10px] uppercase tracking-widest relative opacity-80">
                         <div className="flex justify-center mb-4">
-                            <a href="https://instagram.com/elbarcito_ve" target="_blank" rel="noopener noreferrer" className="text-ritual-accent hover:text-white transition-all duration-300 hover:scale-110">
-                                <LucideIcon name="Instagram" size={24} />
-                            </a>
+                            <a href="https://instagram.com/elbarcito_ve" target="_blank" rel="noopener noreferrer" className="text-ritual-accent hover:text-white transition-all duration-300 hover:scale-110"><LucideIcon name="Instagram" size={24} /></a>
                         </div>
                         <p className="mt-2 opacity-50">Precios sujetos a cambio sin previo aviso</p>
-                        <button
-                            onClick={() => setShowLogin(true)}
-                            className="absolute bottom-4 right-4 p-2 text-ritual-muted/30 hover:text-ritual-muted transition-colors cursor-pointer z-10"
-                            title="Acceso Admin"
-                        >
-                            <LucideIcon name="Settings" size={14} />
-                        </button>
+                        <button onClick={() => setShowLogin(true)} className="absolute bottom-4 right-4 p-2 text-ritual-muted/30 hover:text-ritual-muted transition-colors cursor-pointer z-10" title="Acceso Admin"><LucideIcon name="Settings" size={14} /></button>
                     </footer>
 
                     {/* MODAL CROP */}
-                    {
-                        showCropModal && (
-                            <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center z-[60] p-4 animate-fadeIn">
-                                <div className="bg-ritual-card w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-ritual-accent/30 flex flex-col max-h-[90vh]">
-                                    <div className="p-4 border-b border-ritual-muted/20 flex justify-between items-center bg-ritual-bg/50">
-                                        <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2 text-sm">
-                                            <LucideIcon name="Crop" size={16} /> Ajustar Imagen
-                                        </h3>
-                                        <button onClick={() => { setShowCropModal(false); setCropImageSrc(null); }} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
-                                    </div>
-                                    <div className="flex-1 bg-black relative overflow-hidden flex items-center justify-center p-4">
-                                        <div className="max-h-[50vh] w-full">
-                                            <img ref={imageElementRef} src={cropImageSrc} alt="Crop preview" className="max-w-full block" />
-                                        </div>
-                                    </div>
-                                    <div className="p-4 bg-ritual-bg/50 border-t border-ritual-muted/20 flex justify-end gap-3">
-                                        <button onClick={() => { setShowCropModal(false); setCropImageSrc(null); }} className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-ritual-muted hover:text-white transition-colors">Cancelar</button>
-                                        <button onClick={performCrop} className="px-6 py-2 bg-ritual-accent text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg hover:bg-ritual-accent/80 transition-colors flex items-center gap-2">
-                                            <LucideIcon name="Check" size={14} /> Guardar Foto
-                                        </button>
-                                    </div>
+                    {showCropModal && (
+                        <div className="fixed inset-0 bg-black/95 backdrop-blur-sm flex flex-col items-center justify-center z-[60] p-4 animate-fadeIn">
+                            <div className="bg-ritual-card w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-ritual-accent/30 flex flex-col max-h-[90vh]">
+                                <div className="p-4 border-b border-ritual-muted/20 flex justify-between items-center bg-ritual-bg/50">
+                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2 text-sm"><LucideIcon name="Crop" size={16} /> Ajustar Imagen</h3>
+                                    <button onClick={() => { setShowCropModal(false); setCropImageSrc(null); }} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
+                                </div>
+                                <div className="flex-1 bg-black relative overflow-hidden flex items-center justify-center p-4">
+                                    <div className="max-h-[50vh] w-full"><img ref={imageElementRef} src={cropImageSrc} alt="Crop preview" className="max-w-full block" /></div>
+                                </div>
+                                <div className="p-4 bg-ritual-bg/50 border-t border-ritual-muted/20 flex justify-end gap-3">
+                                    <button onClick={() => { setShowCropModal(false); setCropImageSrc(null); }} className="px-4 py-2 text-xs font-bold uppercase tracking-wider text-ritual-muted hover:text-white transition-colors">Cancelar</button>
+                                    <button onClick={performCrop} className="px-6 py-2 bg-ritual-accent text-white text-xs font-bold uppercase tracking-wider rounded shadow-lg hover:bg-ritual-accent/80 transition-colors flex items-center gap-2"><LucideIcon name="Check" size={14} /> Guardar Foto</button>
                                 </div>
                             </div>
-                        )
-                    }
+                        </div>
+                    )}
 
                     {/* MODAL LOGIN */}
-                    {
-                        showLogin && !isAdmin && (
-                            <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
-                                <div className="bg-ritual-card p-8 rounded-xl w-full max-w-xs border border-ritual-accent/50 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
-                                    <div className="text-center mb-6">
-                                        <LucideIcon name="Lock" className="mx-auto text-ritual-accent mb-2" size={24} />
-                                        <h3 className="text-ritual-text text-xl font-light uppercase tracking-widest">Acceso Admin</h3>
+                    {showLogin && !isAdmin && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-sm flex items-center justify-center z-50 p-4 animate-fadeIn">
+                            <div className="bg-ritual-card p-8 rounded-xl w-full max-w-xs border border-ritual-accent/50 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+                                <div className="text-center mb-6"><LucideIcon name="Lock" className="mx-auto text-ritual-accent mb-2" size={24} /><h3 className="text-ritual-text text-xl font-light uppercase tracking-widest">Acceso Admin</h3></div>
+                                <form onSubmit={handleLogin} className="space-y-4">
+                                    <input type="password" placeholder="Contraseña" className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+                                    <div className="flex gap-3 pt-2">
+                                        <button type="button" onClick={() => setShowLogin(false)} className="flex-1 py-2 bg-transparent border border-ritual-muted text-ritual-muted rounded hover:bg-white/5 transition-colors uppercase text-xs tracking-wider">Cancelar</button>
+                                        <button type="submit" className="flex-1 py-2 bg-ritual-accent text-white font-bold rounded shadow-lg shadow-ritual-accent/20 hover:bg-ritual-accent/90 transition-colors uppercase text-xs tracking-wider">Entrar</button>
                                     </div>
-                                    <form onSubmit={handleLogin} className="space-y-4">
-                                        <input type="password" placeholder="Contraseña" className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
-                                        <div className="flex gap-3 pt-2">
-                                            <button type="button" onClick={() => setShowLogin(false)} className="flex-1 py-2 bg-transparent border border-ritual-muted text-ritual-muted rounded hover:bg-white/5 transition-colors uppercase text-xs tracking-wider">Cancelar</button>
-                                            <button type="submit" className="flex-1 py-2 bg-ritual-accent text-white font-bold rounded shadow-lg shadow-ritual-accent/20 hover:bg-ritual-accent/90 transition-colors uppercase text-xs tracking-wider">Entrar</button>
-                                        </div>
-                                    </form>
-                                </div>
+                                </form>
                             </div>
-                        )
-                    }
+                        </div>
+                    )}
 
                     {/* SELECTOR DE TEMAS */}
-                    {
-                        showThemeSelector && isAdmin && (
-                            <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end sm:items-center justify-center z-50 animate-fadeIn">
-                                <div className="bg-ritual-card w-full sm:max-w-md max-h-[80vh] overflow-y-auto rounded-t-2xl sm:rounded-xl border-t sm:border border-ritual-accent/30 shadow-2xl">
-                                    <div className="sticky top-0 bg-ritual-card/95 backdrop-blur p-4 border-b border-ritual-muted/20 flex justify-between items-center z-10">
-                                        <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2">
-                                            <LucideIcon name="Palette" size={18} /> Elegir Tema
-                                        </h3>
-                                        <button onClick={() => setShowThemeSelector(false)} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
+                    {showThemeSelector && isAdmin && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end sm:items-center justify-center z-50 animate-fadeIn">
+                            <div className="bg-ritual-card w-full sm:max-w-md max-h-[80vh] overflow-y-auto rounded-t-2xl sm:rounded-xl border-t sm:border border-ritual-accent/30 shadow-2xl">
+                                <div className="sticky top-0 bg-ritual-card/95 backdrop-blur p-4 border-b border-ritual-muted/20 flex justify-between items-center z-10">
+                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2"><LucideIcon name="Palette" size={18} /> Elegir Tema</h3>
+                                    <button onClick={() => setShowThemeSelector(false)} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
+                                </div>
+                                <div className="p-4 grid grid-cols-1 gap-3">
+                                    {THEMES.map(theme => (
+                                        <button key={theme.id} onClick={() => changeTheme(theme.id)} className={`flex items-center gap-4 p-3 rounded-lg border transition-all group ${menuData.theme === theme.id ? 'border-ritual-accent bg-ritual-accent/10' : 'border-transparent hover:bg-white/5'} `}>
+                                            <div className="flex gap-1 shrink-0">
+                                                <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.bg }}></div>
+                                                <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.card }}></div>
+                                                <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.accent }}></div>
+                                            </div>
+                                            <span className="text-ritual-text font-medium text-sm text-left flex-1 group-hover:text-ritual-accent transition-colors">{theme.name}</span>
+                                            {menuData.theme === theme.id && <LucideIcon name="Check" size={16} className="text-ritual-accent" />}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* NUEVO: SELECTOR DE ORDEN */}
+                    {showSortSelector && isAdmin && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end sm:items-center justify-center z-50 animate-fadeIn">
+                            {/* Añadido max-h-[70vh], flex-col para scroll, y sm:max-w-sm para hacerlo más pequeño */}
+                            <div className="bg-ritual-card w-full sm:max-w-sm rounded-t-2xl sm:rounded-xl border-t sm:border border-ritual-accent/30 shadow-2xl max-h-[70vh] flex flex-col">
+                                <div className="sticky top-0 bg-ritual-card/95 backdrop-blur p-4 border-b border-ritual-muted/20 flex justify-between items-center z-10 shrink-0">
+                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2 text-xs"><LucideIcon name="ArrowUpDown" size={16} /> Ordenar Menú</h3>
+                                    <button onClick={() => setShowSortSelector(false)} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={18} /></button>
+                                </div>
+                                {/* Añadido overflow-y-auto para el scroll */}
+                                <div className="p-4 space-y-4 overflow-y-auto">
+                                    {/* Orden de Productos */}
+                                    <div className="space-y-2">
+                                        <h4 className="text-[10px] uppercase tracking-widest text-ritual-muted border-b border-ritual-muted/20 pb-1">Orden de Platos</h4>
+                                        <div className="grid gap-2">
+                                            {[
+                                                { id: 'price-desc', label: 'Más Caros Primero ($$$ → $)' },
+                                                { id: 'price-asc', label: 'Más Baratos Primero ($ → $$$)' },
+                                                { id: 'alpha', label: 'Alfabético (A → Z)' },
+                                                { id: 'variants-max', label: 'Con Más Variantes Primero' },
+                                                { id: 'variants-min', label: 'Simples Primero' },
+                                            ].map(opt => (
+                                                <button key={opt.id} onClick={() => changeSort('product', opt.id)} className={`flex items-center justify-between p-2.5 rounded border text-xs transition-all ${menuData.productSort === opt.id ? 'border-ritual-accent text-ritual-accent bg-ritual-accent/10' : 'border-ritual-muted/20 text-ritual-muted hover:border-ritual-muted'}`}>
+                                                    <span>{opt.label}</span>
+                                                    {menuData.productSort === opt.id && <LucideIcon name="Check" size={14} />}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
-                                    <div className="p-4 grid grid-cols-1 gap-3">
-                                        {THEMES.map(theme => (
-                                            <button key={theme.id} onClick={() => changeTheme(theme.id)} className={`flex items-center gap-4 p-3 rounded-lg border transition-all group ${menuData.theme === theme.id ? 'border-ritual-accent bg-ritual-accent/10' : 'border-transparent hover:bg-white/5'} `}>
-                                                <div className="flex gap-1 shrink-0">
-                                                    <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.bg }}></div>
-                                                    <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.card }}></div>
-                                                    <div className="w-6 h-6 rounded-full border border-white/20 shadow-sm" style={{ backgroundColor: theme.colors.accent }}></div>
-                                                </div>
-                                                <span className="text-ritual-text font-medium text-sm text-left flex-1 group-hover:text-ritual-accent transition-colors">{theme.name}</span>
-                                                {menuData.theme === theme.id && <LucideIcon name="Check" size={16} className="text-ritual-accent" />}
-                                            </button>
-                                        ))}
+
+                                    {/* Orden de Variantes */}
+                                    <div className="space-y-2">
+                                        <h4 className="text-[10px] uppercase tracking-widest text-ritual-muted border-b border-ritual-muted/20 pb-1">Orden de Sub-productos</h4>
+                                        <div className="grid gap-2">
+                                            {[
+                                                { id: 'price-asc', label: 'Más Baratos Primero' },
+                                                { id: 'price-desc', label: 'Más Caros Primero' },
+                                                { id: 'alpha', label: 'Alfabético (A → Z)' },
+                                            ].map(opt => (
+                                                <button key={opt.id} onClick={() => changeSort('variant', opt.id)} className={`flex items-center justify-between p-2.5 rounded border text-xs transition-all ${menuData.variantSort === opt.id ? 'border-ritual-accent text-ritual-accent bg-ritual-accent/10' : 'border-ritual-muted/20 text-ritual-muted hover:border-ritual-muted'}`}>
+                                                    <span>{opt.label}</span>
+                                                    {menuData.variantSort === opt.id && <LucideIcon name="Check" size={14} />}
+                                                </button>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
                             </div>
-                        )
-                    }
+                        </div>
+                    )}
 
                     {/* SELECTOR DE ICONOS */}
-                    {
-                        editingIconCategory && isAdmin && (
-                            <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end sm:items-center justify-center z-50 animate-fadeIn">
-                                <div className="bg-ritual-card w-full sm:max-w-md rounded-t-2xl sm:rounded-xl border-t sm:border border-ritual-accent/30 shadow-2xl max-h-[80vh] flex flex-col">
-                                    <div className="p-4 border-b border-ritual-muted/20 flex justify-between items-center">
-                                        <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2">
-                                            <LucideIcon name="LayoutGrid" size={18} /> Elegir Icono
-                                        </h3>
-                                        <button onClick={() => setEditingIconCategory(null)} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
-                                    </div>
-                                    <div className="p-6 grid grid-cols-5 gap-4 overflow-y-auto">
-                                        {AVAILABLE_ICONS.map(iconName => (
-                                            <button key={iconName} onClick={() => updateCategoryIcon(iconName)} className="aspect-square flex flex-col items-center justify-center gap-1 rounded-lg border border-ritual-muted/20 hover:bg-ritual-accent/20 hover:border-ritual-accent hover:text-ritual-accent text-ritual-muted transition-all">
-                                                <LucideIcon name={iconName} size={24} />
-                                            </button>
-                                        ))}
-                                    </div>
+                    {editingIconCategory && isAdmin && (
+                        <div className="fixed inset-0 bg-black/90 backdrop-blur-md flex items-end sm:items-center justify-center z-50 animate-fadeIn">
+                            <div className="bg-ritual-card w-full sm:max-w-md rounded-t-2xl sm:rounded-xl border-t sm:border border-ritual-accent/30 shadow-2xl max-h-[80vh] flex flex-col">
+                                <div className="p-4 border-b border-ritual-muted/20 flex justify-between items-center">
+                                    <h3 className="text-ritual-text font-bold uppercase tracking-widest flex items-center gap-2"><LucideIcon name="LayoutGrid" size={18} /> Elegir Icono</h3>
+                                    <button onClick={() => setEditingIconCategory(null)} className="text-ritual-muted hover:text-white"><LucideIcon name="X" size={20} /></button>
+                                </div>
+                                <div className="p-6 grid grid-cols-5 gap-4 overflow-y-auto">
+                                    {AVAILABLE_ICONS.map(iconName => (
+                                        <button key={iconName} onClick={() => updateCategoryIcon(iconName)} className="aspect-square flex flex-col items-center justify-center gap-1 rounded-lg border border-ritual-muted/20 hover:bg-ritual-accent/20 hover:border-ritual-accent hover:text-ritual-accent text-ritual-muted transition-all"><LucideIcon name={iconName} size={24} /></button>
+                                    ))}
                                 </div>
                             </div>
-                        )
-                    }
+                        </div>
+                    )}
 
                     {/* BARRA FLOTANTE ADMIN */}
-                    {
-                        isAdmin && (
-                            <div className="fixed bottom-0 left-0 right-0 bg-ritual-accent/95 backdrop-blur text-white p-3 text-center text-sm font-bold z-40 flex justify-between items-center px-6 shadow-[0_-5px_20px_rgba(0,0,0,0.5)] animate-fadeIn">
-                                <div className="flex items-center gap-3">
-                                    <button onClick={() => setShowThemeSelector(true)} className="bg-black/20 p-2 rounded-full hover:bg-black/40 transition-colors flex items-center gap-2 px-3" title="Cambiar Tema Visual">
-                                        <LucideIcon name="Palette" size={16} />
-                                        <span className="text-[10px] uppercase tracking-wider">Temas</span>
-                                    </button>
-
-                                    <button onClick={resetDatabase} className="bg-red-500/20 p-2 rounded-full hover:bg-red-500/40 transition-colors flex items-center gap-2 px-3 border border-red-500/30 text-red-100" title="Reiniciar Base de Datos">
-                                        <LucideIcon name="DatabaseBackup" size={16} />
-                                        <span className="text-[10px] uppercase tracking-wider hidden sm:inline">Reset DB</span>
-                                    </button>
-
-
-
-                                    {/* Status Pill */}
-                                    <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 border transition-colors ${dbStatus === 'connected' ? 'bg-green-500/20 text-green-100 border-green-500/50' : 'bg-red-500/20 text-red-100 border-red-500/50'} `}>
-                                        <div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,0.8)]' : 'bg-red-400 animate-pulse'}`}></div>
-                                        {dbStatus === 'connected' ? 'En Línea' : 'Offline'}
-                                    </div>
-                                </div>
-
-                                <div className="flex items-center gap-4">
-                                    {isSaving && (
-                                        <div className="flex items-center gap-2 text-white/90 animate-pulse">
-                                            <LucideIcon name="RefreshCw" className="animate-spin" size={14} />
-                                            <span className="text-[10px] uppercase font-bold tracking-widest hidden sm:inline">Guardando...</span>
-                                        </div>
-                                    )}
-                                    <button onClick={() => setIsAdmin(false)} className="bg-black/20 px-4 py-1.5 rounded-full hover:bg-black/40 transition-colors uppercase text-[10px] tracking-widest font-bold">Salir</button>
-                                </div>
+                    {isAdmin && (
+                        <div className="fixed bottom-0 left-0 right-0 bg-ritual-accent/95 backdrop-blur text-white p-3 text-center text-sm font-bold z-40 flex justify-between items-center px-6 shadow-[0_-5px_20px_rgba(0,0,0,0.5)] animate-fadeIn">
+                            <div className="flex items-center gap-3">
+                                <button onClick={() => setShowThemeSelector(true)} className="bg-black/20 p-2 rounded-full hover:bg-black/40 transition-colors flex items-center gap-2 px-3" title="Cambiar Tema Visual"><LucideIcon name="Palette" size={16} /><span className="text-[10px] uppercase tracking-wider hidden sm:inline">Temas</span></button>
+                                <button onClick={() => setShowSortSelector(true)} className="bg-black/20 p-2 rounded-full hover:bg-black/40 transition-colors flex items-center gap-2 px-3" title="Ordenar Productos"><LucideIcon name="ArrowUpDown" size={16} /><span className="text-[10px] uppercase tracking-wider hidden sm:inline">Orden</span></button>
+                                <button onClick={resetDatabase} className="bg-red-500/20 p-2 rounded-full hover:bg-red-500/40 transition-colors flex items-center gap-2 px-3 border border-red-500/30 text-red-100" title="Reiniciar Base de Datos"><LucideIcon name="DatabaseBackup" size={16} /></button>
+                                {/* Status Pill */}
+                                <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 border transition-colors ${dbStatus === 'connected' ? 'bg-green-500/20 text-green-100 border-green-500/50' : 'bg-red-500/20 text-red-100 border-red-500/50'} `}><div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,0.8)]' : 'bg-red-400 animate-pulse'}`}></div>{dbStatus === 'connected' ? 'On' : 'Off'}</div>
                             </div>
-                        )
-                    }
+                            <div className="flex items-center gap-4">
+                                {isSaving && ( <div className="flex items-center gap-2 text-white/90 animate-pulse"><LucideIcon name="RefreshCw" className="animate-spin" size={14} /><span className="text-[10px] uppercase font-bold tracking-widest hidden sm:inline">Guardando...</span></div> )}
+                                <button onClick={() => setIsAdmin(false)} className="bg-black/20 px-4 py-1.5 rounded-full hover:bg-black/40 transition-colors uppercase text-[10px] tracking-widest font-bold">Salir</button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         };
