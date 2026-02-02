@@ -213,6 +213,32 @@
 
         // --- DEFINICIÓN DE HELPERS (Antes de initFirebase) ---
 
+        // Helper: Verificar Password en BD
+        window.verifyAdminPassword = async (inputPassword) => {
+            if (!db) return { success: false, error: 'offline' };
+            
+            // Usamos un documento separado para la configuración del admin
+            const docRef = doc(db, 'artifacts', appId, 'settings', 'admin');
+
+            try {
+                const snap = await getDoc(docRef);
+                let realPass = 'admin123'; // Default fallback
+
+                if (snap.exists()) {
+                    realPass = snap.data().password || 'admin123';
+                } else {
+                    // Si es la primera vez, creamos el documento con la clave default
+                    console.log("Inicializando configuración de admin...");
+                    await setDoc(docRef, { password: 'admin123' });
+                }
+
+                return { success: inputPassword === realPass };
+            } catch (e) {
+                console.error("Error verificando password:", e);
+                return { success: false, error: e.message };
+            }
+        };
+
         // Helper: Fetch Menu
         window.fetchMenu = async () => {
             if (!db) return null; // No devolver nada si no hay DB (Strict Mode)
@@ -428,6 +454,7 @@
             const [isAdmin, setIsAdmin] = useState(false);
             const [showLogin, setShowLogin] = useState(false);
             const [password, setPassword] = useState("");
+            const [isVerifying, setIsVerifying] = useState(false);
             const [showThemeSelector, setShowThemeSelector] = useState(false);
             const [showSortSelector, setShowSortSelector] = useState(false);
             const [editingIconCategory, setEditingIconCategory] = useState(null);
@@ -512,10 +539,65 @@
 
             const toggleCategory = (id) => setActiveCategory(activeCategory === id ? null : id);
 
-            const handleLogin = (e) => {
+            const handleLogin = async (e) => {
                 e.preventDefault();
-                if (password === "admin123") { setIsAdmin(true); setShowLogin(false); setPassword(""); } 
-                else { alert("Contraseña incorrecta"); }
+
+                // 1. Verificar si está bloqueado por SPAM
+                const storedLockout = localStorage.getItem('adminLockout');
+                if (storedLockout && new Date().getTime() < parseInt(storedLockout)) {
+                    const remainingHours = Math.ceil((parseInt(storedLockout) - new Date().getTime()) / (1000 * 60 * 60));
+                    const remainingMinutes = Math.ceil((parseInt(storedLockout) - new Date().getTime()) / (1000 * 60));
+                    
+                    let msg = `Panel bloqueado por seguridad.`;
+                    if (remainingHours > 1) msg += ` Intente en ${remainingHours} horas.`;
+                    else msg += ` Intente en ${remainingMinutes} minutos.`;
+                    
+                    alert(msg);
+                    return;
+                }
+
+                // 2. Limpiar bloqueo si ya pasó el tiempo
+                if (storedLockout && new Date().getTime() > parseInt(storedLockout)) {
+                    localStorage.removeItem('adminLockout');
+                    localStorage.setItem('loginAttempts', '0');
+                }
+
+                // 3. Validar longitud
+                if (password.length > 20) {
+                    alert("La contraseña no puede tener más de 20 caracteres.");
+                    return;
+                }
+
+                // 4. Verificar en BD
+                setIsVerifying(true);
+                const result = await window.verifyAdminPassword(password);
+                setIsVerifying(false);
+
+                if (result.success) {
+                    setIsAdmin(true);
+                    setShowLogin(false);
+                    setPassword("");
+                    // Resetear intentos al tener éxito
+                    localStorage.setItem('loginAttempts', '0');
+                    localStorage.removeItem('adminLockout');
+                } else {
+                    // Manejar error y contar intentos
+                    if (result.error === 'offline') {
+                        alert("No hay conexión para verificar la contraseña.");
+                    } else {
+                        const currentAttempts = parseInt(localStorage.getItem('loginAttempts') || '0') + 1;
+                        localStorage.setItem('loginAttempts', currentAttempts.toString());
+
+                        if (currentAttempts >= 3) {
+                            const lockoutTime = new Date().getTime() + (3 * 60 * 60 * 1000); // 3 Horas
+                            localStorage.setItem('adminLockout', lockoutTime.toString());
+                            alert("⛔ Has excedido el número de intentos (3/3).\n\nEl panel administrativo ha sido bloqueado por 3 horas para evitar ataques.");
+                            setShowLogin(false); // Cerrar modal
+                        } else {
+                            alert(`Contraseña incorrecta.\nIntentos restantes: ${3 - currentAttempts}`);
+                        }
+                    }
+                }
             };
 
             const saveChanges = async (newDataRaw) => {
@@ -767,10 +849,32 @@
                             <div className="bg-ritual-card p-8 rounded-xl w-full max-w-xs border border-ritual-accent/50 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
                                 <div className="text-center mb-6"><LucideIcon name="Lock" className="mx-auto text-ritual-accent mb-2" size={24} /><h3 className="text-ritual-text text-xl font-light uppercase tracking-widest">Acceso Admin</h3></div>
                                 <form onSubmit={handleLogin} className="space-y-4">
-                                    <input type="password" placeholder="Contraseña" className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50" value={password} onChange={(e) => setPassword(e.target.value)} autoFocus />
+                                    <input 
+                                        type="password" 
+                                        placeholder="Contraseña" 
+                                        className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50" 
+                                        value={password} 
+                                        onChange={(e) => setPassword(e.target.value)} 
+                                        autoFocus 
+                                        disabled={isVerifying}
+                                        maxLength={20} // Limite HTML nativo
+                                    />
                                     <div className="flex gap-3 pt-2">
                                         <button type="button" onClick={() => setShowLogin(false)} className="flex-1 py-2 bg-transparent border border-ritual-muted text-ritual-muted rounded hover:bg-white/5 transition-colors uppercase text-xs tracking-wider">Cancelar</button>
-                                        <button type="submit" className="flex-1 py-2 bg-ritual-accent text-white font-bold rounded shadow-lg shadow-ritual-accent/20 hover:bg-ritual-accent/90 transition-colors uppercase text-xs tracking-wider">Entrar</button>
+                                        <button 
+                                            type="submit" 
+                                            disabled={isVerifying || password.length === 0}
+                                            className={`flex-1 py-2 bg-ritual-accent text-white font-bold rounded shadow-lg shadow-ritual-accent/20 transition-colors uppercase text-xs tracking-wider flex justify-center items-center gap-2 ${isVerifying ? 'opacity-70 cursor-wait' : 'hover:bg-ritual-accent/90'}`}
+                                        >
+                                            {isVerifying ? (
+                                                <>
+                                                    <LucideIcon name="Loader2" className="animate-spin" size={14} />
+                                                    <span>Verificando...</span>
+                                                </>
+                                            ) : (
+                                                <span>Entrar</span>
+                                            )}
+                                        </button>
                                     </div>
                                 </form>
                             </div>
