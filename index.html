@@ -232,26 +232,51 @@
                 const snap = await getDoc(docRef);
                 const inputHash = await hashPassword(inputPassword);
                 
+                // DIAGNÓSTICO EN CONSOLA
+                console.log("--- DEBUG ADMIN LOGIN ---");
+                console.log("1. Tu Password:", inputPassword);
+                console.log("2. Hash generado (Input):", inputHash);
+                
                 // Hash por defecto de 'admin123'
-                // (calculado previamente o generado al vuelo si no existe)
                 let realPassHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9'; 
 
                 if (snap.exists()) {
-                    realPassHash = snap.data().passwordHash;
+                    const data = snap.data();
+                    console.log("3. Datos encontrados en Firestore:", data);
+                    
+                    if (data.passwordHash) {
+                        realPassHash = data.passwordHash;
+                        console.log("4. Hash leído de la BD:", realPassHash);
+                    } else {
+                        console.warn("⚠️ ERROR: El documento existe pero no tiene el campo 'passwordHash'.");
+                        console.warn("Campos actuales:", Object.keys(data));
+                        console.warn("Revisa en Firebase si escribiste 'passwordHash' con mayúscula en la H.");
+                    }
                 } else {
-                    // SI NO EXISTE: Intentamos crearlo
-                    console.log("Creando configuración de admin por defecto...");
-                    const defaultHash = await hashPassword('admin123');
-                    await setDoc(docRef, { passwordHash: defaultHash });
-                    realPassHash = defaultHash;
+                    console.warn("⚠️ ERROR: No se encontró el documento 'artifacts/ritual-bar-app/settings/admin'.");
+                    console.log("Usando hash por defecto local (admin123).");
+                    
+                    // SI NO EXISTE: Intentamos crearlo (fallará si las reglas están activas)
+                    try {
+                        const defaultHash = await hashPassword('admin123');
+                        await setDoc(docRef, { passwordHash: defaultHash });
+                        realPassHash = defaultHash;
+                        console.log("✅ Se intentó crear el documento por defecto.");
+                    } catch (err) {
+                        console.log("❌ No se pudo crear el documento automático (Reglas de seguridad activas).");
+                    }
                 }
 
-                return { success: inputHash === realPassHash };
+                const match = inputHash.trim() === realPassHash.trim();
+                console.log("5. ¿Coinciden?", match ? "SÍ" : "NO");
+                console.log("-------------------------");
+
+                return { success: match };
             } catch (e) {
                 console.error("Error verificando password:", e);
                 // Detectar error de permisos explícitamente
                 if (e.code === 'permission-denied') {
-                    alert("⚠️ ERROR DE CONFIGURACIÓN DE FIREBASE:\n\nNo se pudo crear o leer la contraseña en la base de datos porque las reglas de seguridad lo impiden.\n\nPor favor, actualiza las 'Reglas' en la consola de Firebase.");
+                    alert("⚠️ ERROR DE PERMISOS:\nLas reglas de Firebase impiden leer la contraseña. Verifica que 'settings/admin' tenga 'allow read: if true;'");
                 }
                 return { success: false, error: e.message };
             }
