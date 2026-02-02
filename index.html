@@ -142,7 +142,7 @@
         // --- 2. DATOS SEMILLA (Definidos PRIMERO para asegurar disponibilidad) ---
         const seedData = window.rawSeedData || { categories: [] };
 
-        // Helper: Sort Items by Price
+        // Helper: Sort Items by Price (Solo ordena ITEMS, no categorias)
         window.sortCategories = (data) => {
             if (!data || !data.categories) return data;
             const sortedData = { ...data };
@@ -183,16 +183,20 @@
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
 
-                    // Fusión de datos: Priorizamos cloudData, pero mantenemos estructura de seedData
-                    const mergedCategories = seedData.categories.map(seedCat => {
-                        const cloudCat = cloudData.categories?.find(c => c.id === seedCat.id);
-                        return cloudCat || seedCat;
-                    });
-
-                    return window.sortCategories({ ...seedData, ...cloudData, categories: mergedCategories });
+                    // CORRECCIÓN CRÍTICA:
+                    // Si existen datos en la nube, confiamos en ellos completamente.
+                    // NO intentamos fusionar con seedData usando IDs porque eso borraba las categorías nuevas.
+                    
+                    if (cloudData && cloudData.categories && cloudData.categories.length > 0) {
+                        // Solo ordenamos los items dentro de las categorías, respetando el orden de las categorías
+                        return window.sortCategories(cloudData);
+                    } else {
+                        // Si el documento existe pero está vacío o corrupto, volvemos a seed
+                        return window.sortCategories(seedData);
+                    }
                 } else {
                     console.log("Creando menú inicial...");
-                    await setDoc(docRef, seedData); // Guardamos como semilla (ordenado luego al leer o si se decide guardar ordenado)
+                    await setDoc(docRef, seedData);
                     return window.sortCategories(seedData);
                 }
             } catch (err) {
@@ -203,9 +207,8 @@
 
         // Helper: Guardar
         window.saveMenuToDB = async (data) => {
-            // Check más robusto
             if (window.firebaseStatus !== 'connected' || !db) {
-                console.warn(`Modo Demo/Offline: No se guardan cambios. Status: ${window.firebaseStatus}, DB: ${!!db}`);
+                console.warn(`Modo Demo/Offline: No se guardan cambios.`);
                 alert(`Error: No hay conexión a la base de datos (${window.firebaseStatus}). Revise su conexión.`);
                 return false;
             }
@@ -756,6 +759,28 @@
                 saveChanges(newData);
             };
 
+            // NUEVA FUNCIÓN: Mover Categoría
+            const moveCategory = (index, direction, e) => {
+                e.stopPropagation(); // Evitar colapsar/expandir al hacer click
+                const newData = getCleanData();
+                
+                if (direction === -1 && index > 0) {
+                    // Mover Arriba
+                    const temp = newData.categories[index];
+                    newData.categories[index] = newData.categories[index - 1];
+                    newData.categories[index - 1] = temp;
+                } else if (direction === 1 && index < newData.categories.length - 1) {
+                    // Mover Abajo
+                    const temp = newData.categories[index];
+                    newData.categories[index] = newData.categories[index + 1];
+                    newData.categories[index + 1] = temp;
+                } else {
+                    return; // Movimiento no válido
+                }
+                
+                saveChanges(newData);
+            };
+
             const changeTheme = (themeId) => {
                 const newData = getCleanData();
                 newData.theme = themeId;
@@ -800,7 +825,7 @@
 
                     {/* CONTENIDO DEL MENÚ */}
                     <main className="p-4 space-y-4 mt-2">
-                        {menuData.categories.map((cat) => (
+                        {menuData.categories.map((cat, catIndex) => (
                             (!cat.visible && !isAdmin) ? null : (
                                 <div key={cat.id} className={`rounded-lg overflow-hidden transition-all duration-300 ${activeCategory === cat.id ? 'bg-ritual-card shadow-lg ring-1 ring-ritual-accent/30 mb-4 scale-[1.02]' : 'bg-ritual-card/40 hover:bg-ritual-card/60'}`}>
 
@@ -840,12 +865,33 @@
 
                                         <div className="flex items-center gap-3">
                                             {isAdmin && (
-                                                <div className="flex items-center gap-1">
-                                                    <button onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id) }} className="p-2 text-red-400/50 hover:text-red-400 hover:bg-red-900/20 rounded-full transition-colors" title="Eliminar Categoría">
-                                                        <LucideIcon name="Trash2" size={16} />
+                                                <div className="flex items-center gap-1 bg-black/20 rounded-full p-1 mr-2">
+                                                    
+                                                    {/* Botones de Reordenamiento */}
+                                                    <button 
+                                                        onClick={(e) => moveCategory(catIndex, -1, e)} 
+                                                        disabled={catIndex === 0}
+                                                        className={`p-1.5 rounded-full transition-colors ${catIndex === 0 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}
+                                                        title="Mover arriba"
+                                                    >
+                                                        <LucideIcon name="ChevronUp" size={14} />
                                                     </button>
-                                                    <button onClick={(e) => { e.stopPropagation(); toggleCatVisibility(cat.id) }} className="p-2 text-ritual-muted hover:text-ritual-text hover:bg-white/5 rounded-full transition-colors" title={cat.visible ? "Ocultar al público" : "Mostrar al público"}>
-                                                        <LucideIcon name={cat.visible ? "Eye" : "EyeOff"} size={18} />
+                                                    <button 
+                                                        onClick={(e) => moveCategory(catIndex, 1, e)} 
+                                                        disabled={catIndex === menuData.categories.length - 1}
+                                                        className={`p-1.5 rounded-full transition-colors ${catIndex === menuData.categories.length - 1 ? 'text-ritual-muted/20 cursor-default' : 'text-ritual-muted hover:text-white hover:bg-white/10'}`}
+                                                        title="Mover abajo"
+                                                    >
+                                                        <LucideIcon name="ChevronDown" size={14} />
+                                                    </button>
+
+                                                    <div className="w-px h-4 bg-white/10 mx-1"></div>
+
+                                                    <button onClick={(e) => { e.stopPropagation(); toggleCatVisibility(cat.id) }} className="p-1.5 text-ritual-muted hover:text-ritual-text hover:bg-white/10 rounded-full transition-colors" title={cat.visible ? "Ocultar al público" : "Mostrar al público"}>
+                                                        <LucideIcon name={cat.visible ? "Eye" : "EyeOff"} size={16} />
+                                                    </button>
+                                                    <button onClick={(e) => { e.stopPropagation(); deleteCategory(cat.id) }} className="p-1.5 text-red-400/50 hover:text-red-400 hover:bg-red-900/20 rounded-full transition-colors" title="Eliminar Categoría">
+                                                        <LucideIcon name="Trash2" size={16} />
                                                     </button>
                                                 </div>
                                             )}
