@@ -213,28 +213,46 @@
 
         // --- DEFINICIÓN DE HELPERS (Antes de initFirebase) ---
 
+        // Helper: Hash SHA-256 para seguridad
+        async function hashPassword(message) {
+            const msgBuffer = new TextEncoder().encode(message);
+            const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+
         // Helper: Verificar Password en BD
         window.verifyAdminPassword = async (inputPassword) => {
             if (!db) return { success: false, error: 'offline' };
             
-            // Usamos un documento separado para la configuración del admin
+            // Documento de configuración administrativa
             const docRef = doc(db, 'artifacts', appId, 'settings', 'admin');
 
             try {
                 const snap = await getDoc(docRef);
-                let realPass = 'admin123'; // Default fallback
+                const inputHash = await hashPassword(inputPassword);
+                
+                // Hash por defecto de 'admin123'
+                // (calculado previamente o generado al vuelo si no existe)
+                let realPassHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9'; 
 
                 if (snap.exists()) {
-                    realPass = snap.data().password || 'admin123';
+                    realPassHash = snap.data().passwordHash;
                 } else {
-                    // Si es la primera vez, creamos el documento con la clave default
-                    console.log("Inicializando configuración de admin...");
-                    await setDoc(docRef, { password: 'admin123' });
+                    // SI NO EXISTE: Intentamos crearlo
+                    console.log("Creando configuración de admin por defecto...");
+                    const defaultHash = await hashPassword('admin123');
+                    await setDoc(docRef, { passwordHash: defaultHash });
+                    realPassHash = defaultHash;
                 }
 
-                return { success: inputPassword === realPass };
+                return { success: inputHash === realPassHash };
             } catch (e) {
                 console.error("Error verificando password:", e);
+                // Detectar error de permisos explícitamente
+                if (e.code === 'permission-denied') {
+                    alert("⚠️ ERROR DE CONFIGURACIÓN DE FIREBASE:\n\nNo se pudo crear o leer la contraseña en la base de datos porque las reglas de seguridad lo impiden.\n\nPor favor, actualiza las 'Reglas' en la consola de Firebase.");
+                }
                 return { success: false, error: e.message };
             }
         };
