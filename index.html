@@ -629,14 +629,28 @@
             };
 
             const saveChanges = async (newDataRaw) => {
-                // Importante: Aplicamos el ordenamiento antes de guardar en estado y BD
-                // para que la UI se refresque con el orden correcto inmediatamente.
-                const newData = window.sortCategories(newDataRaw);
+                // LÓGICA DE ESTABILIDAD:
+                // Si somos Admin, NO reordenamos la vista local automáticamente al editar.
+                // Esto evita que los platos "salten" de lugar mientras escribes precios.
+                // Sin embargo, generamos una versión ordenada para guardar en la BD,
+                // así los clientes siempre ven el menú ordenado por precio.
 
-                setMenuData(newData);
+                let dataForState = newDataRaw;
+                
+                // Siempre calculamos la versión ordenada para la base de datos
+                const dataForDB = window.sortCategories(newDataRaw);
+
+                if (!isAdmin) {
+                    // Si no fueramos admin (caso hipotético), actualizamos el estado con el orden
+                    dataForState = dataForDB;
+                }
+
+                // Actualizamos el estado local (si es admin, se mantiene el orden visual actual)
+                setMenuData(dataForState);
+                
                 setIsSaving(true);
                 if (window.saveMenuToDB) {
-                    await window.saveMenuToDB(newData);
+                    await window.saveMenuToDB(dataForDB);
                 }
                 setTimeout(() => setIsSaving(false), 800);
             };
