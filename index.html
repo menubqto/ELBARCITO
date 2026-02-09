@@ -118,7 +118,7 @@
     <!-- Firebase SDKs (Modular) -->
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, initializeFirestore, collection, doc, getDoc, setDoc, updateDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getStorage, ref, uploadBytes, getDownloadURL } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
@@ -352,8 +352,25 @@
         const initFirebase = async () => {
             try {
                 updateStatus('connecting');
+
+                // Detectar Chrome iOS (tiene problemas de rendimiento con IndexedDB)
+                const isChromeIOS = /CriOS/.test(navigator.userAgent);
+                console.log('[Init] Chrome iOS detectado:', isChromeIOS);
+
                 app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
+
+                // Configurar Firestore optimizado para Chrome iOS
+                if (isChromeIOS) {
+                    console.log('[Firestore] Configurando caché mínimo para Chrome iOS...');
+                    db = initializeFirestore(app, {
+                        cacheSizeBytes: 1048576, // 1MB (mínimo posible)
+                        experimentalForceLongPolling: true // Evitar WebSocket problemas
+                    });
+                    console.log('[Firestore] Configuración optimizada aplicada');
+                } else {
+                    db = getFirestore(app);
+                }
+
                 auth = getAuth(app);
                 storage = getStorage(app);
 
