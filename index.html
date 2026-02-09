@@ -353,23 +353,15 @@
             try {
                 updateStatus('connecting');
 
-                // Detectar Chrome iOS (tiene problemas de rendimiento con IndexedDB)
-                const isChromeIOS = /CriOS/.test(navigator.userAgent);
-                console.log('[Init] Chrome iOS detectado:', isChromeIOS);
-
                 app = initializeApp(firebaseConfig);
 
-                // Configurar Firestore optimizado para Chrome iOS
-                if (isChromeIOS) {
-                    console.log('[Firestore] Configurando caché mínimo para Chrome iOS...');
-                    db = initializeFirestore(app, {
-                        cacheSizeBytes: 1048576, // 1MB (mínimo posible)
-                        experimentalForceLongPolling: true // Evitar WebSocket problemas
-                    });
-                    console.log('[Firestore] Configuración optimizada aplicada');
-                } else {
-                    db = getFirestore(app);
-                }
+                // Configurar Firestore con caché mínimo para todos los navegadores (optimización global)
+                console.log('[Firestore] Configurando caché optimizado (1MB)...');
+                db = initializeFirestore(app, {
+                    cacheSizeBytes: 1048576, // 1MB (suficiente para menú pequeño)
+                    experimentalForceLongPolling: true // Mejor estabilidad en móviles
+                });
+                console.log('[Firestore] Configuración optimizada aplicada');
 
                 auth = getAuth(app);
                 storage = getStorage(app);
