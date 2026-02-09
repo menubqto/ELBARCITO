@@ -365,18 +365,22 @@
                     }
                 }, 10000);
 
-                onAuthStateChanged(auth, async (user) => {
+                onAuthStateChanged(auth, (user) => {
                     clearTimeout(timeoutId); // Cancelar timeout si conecta
                     if (user) {
+                        console.log('[Firebase] Usuario autenticado');
                         updateStatus('connected');
                     } else {
-                        try {
-                            // Hacer signInAnonymously síncrono para evitar race condition
-                            await signInAnonymously(auth);
-                            // El estado se actualizará cuando onAuthStateChanged se dispare de nuevo
-                        } catch (e) {
-                            updateStatus('error', e);
-                        }
+                        console.log('[Firebase] Iniciando sesión anónima...');
+                        signInAnonymously(auth)
+                            .then(() => {
+                                console.log('[Firebase] Sesión anónima iniciada');
+                                // onAuthStateChanged se disparará de nuevo con el usuario
+                            })
+                            .catch(e => {
+                                console.error('[Firebase] Error en sesión anónima:', e);
+                                updateStatus('error', e);
+                            });
                     }
                 });
             } catch (e) {
