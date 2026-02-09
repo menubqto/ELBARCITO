@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="version" content="2.1.2"> <!-- Versión actualizada para reintentar deploy -->
+    <meta name="version" content="2.1.0"> <!-- Versión actualizada para forzar push -->
     <title>El Barcito - Menú Digital</title>
 
     <!-- React & ReactDOM -->
@@ -149,7 +149,7 @@
             const sortedData = { ...data };
 
             // Leer configuración de ordenamiento del objeto de datos (o usar defaults)
-            const pSort = data.productSort || 'price-desc'; 
+            const pSort = data.productSort || 'price-desc';
             const vSort = data.variantSort || 'price-asc';
 
             sortedData.categories = sortedData.categories.map(cat => {
@@ -158,7 +158,7 @@
                 // 1. Clonamos items
                 let processedItems = cat.items.map(item => {
                     let newItem = { ...item };
-                    
+
                     // A. ORDENAR VARIANTES
                     if (newItem.variants && newItem.variants.length > 0) {
                         newItem.variants = [...newItem.variants].sort((a, b) => {
@@ -174,9 +174,9 @@
                 // 2. ORDENAR PRODUCTOS
                 processedItems.sort((a, b) => {
                     // Precios de referencia (usamos el mínimo si hay variantes)
-                    const priceA = a.variants && a.variants.length > 0 
+                    const priceA = a.variants && a.variants.length > 0
                         ? Math.min(...a.variants.map(v => v.price)) : a.price;
-                    const priceB = b.variants && b.variants.length > 0 
+                    const priceB = b.variants && b.variants.length > 0
                         ? Math.min(...b.variants.map(v => v.price)) : b.price;
 
                     // Cantidad de variantes
@@ -201,7 +201,7 @@
                         default:
                             return priceB - priceA;
                     }
-                    
+
                     // Fallback alfabético siempre
                     return a.name.localeCompare(b.name);
                 });
@@ -225,26 +225,26 @@
         // Helper: Verificar Password en BD
         window.verifyAdminPassword = async (inputPassword) => {
             if (!db) return { success: false, error: 'offline' };
-            
+
             // Documento de configuración administrativa
             const docRef = doc(db, 'artifacts', appId, 'settings', 'admin');
 
             try {
                 const snap = await getDoc(docRef);
                 const inputHash = await hashPassword(inputPassword);
-                
+
                 // DIAGNÓSTICO EN CONSOLA
                 console.log("--- DEBUG ADMIN LOGIN ---");
                 console.log("1. Tu Password:", inputPassword);
                 console.log("2. Hash generado (Input):", inputHash);
-                
+
                 // Hash por defecto de 'admin123'
-                let realPassHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9'; 
+                let realPassHash = '240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9';
 
                 if (snap.exists()) {
                     const data = snap.data();
                     console.log("3. Datos encontrados en Firestore:", data);
-                    
+
                     if (data.passwordHash) {
                         realPassHash = data.passwordHash;
                         console.log("4. Hash leído de la BD:", realPassHash);
@@ -256,7 +256,7 @@
                 } else {
                     console.warn("⚠️ ERROR: No se encontró el documento 'artifacts/ritual-bar-app/settings/admin'.");
                     console.log("Usando hash por defecto local (admin123).");
-                    
+
                     // SI NO EXISTE: Intentamos crearlo (fallará si las reglas están activas)
                     try {
                         const defaultHash = await hashPassword('admin123');
@@ -285,7 +285,10 @@
 
         // Helper: Fetch Menu
         window.fetchMenu = async () => {
-            if (!db) return null; // No devolver nada si no hay DB (Strict Mode)
+            if (!db) {
+                console.warn('[fetchMenu] db no disponible');
+                return null;
+            }
 
             const docRef = doc(db, 'artifacts', appId, 'public', 'menu');
 
@@ -294,20 +297,23 @@
                 if (docSnap.exists()) {
                     const cloudData = docSnap.data();
                     if (cloudData && cloudData.categories && cloudData.categories.length > 0) {
+                        console.log('[fetchMenu] Menú cargado exitosamente');
                         return window.sortCategories(cloudData);
                     }
                 } else {
-                    // Solo si estamos conectados y NO existe, creamos el inicial
+                    // Solo crear si estamos realmente conectados
                     if (window.firebaseStatus === 'connected') {
-                        console.log("Creando menú inicial...");
+                        console.log('[fetchMenu] Creando menú inicial...');
                         await setDoc(docRef, seedData);
                         return window.sortCategories(seedData);
                     }
                 }
             } catch (err) {
-                console.warn("Error obteniendo menú:", err);
+                console.error('[fetchMenu] Error obteniendo menú:', err);
+                // Propagar el error para que React lo maneje
+                throw err;
             }
-            return null; // Si falla, devolvemos null para mostrar Loading/Error
+            return null;
         };
 
         // Helper: Guardar
@@ -335,7 +341,7 @@
             window.firebaseStatus = status;
             if (status === 'connected') {
                 isDemoMode = false;
-                window.dbInstance = db; 
+                window.dbInstance = db;
             }
             if (window.onFirebaseStatusChange) {
                 window.onFirebaseStatusChange(status);
@@ -351,13 +357,26 @@
                 auth = getAuth(app);
                 storage = getStorage(app);
 
-                onAuthStateChanged(auth, (user) => {
+                // Timeout de 10 segundos - recarga automática si no conecta
+                const timeoutId = setTimeout(() => {
+                    if (window.firebaseStatus === 'connecting') {
+                        console.warn('[Firebase] Timeout de conexión - recargando página...');
+                        window.location.reload();
+                    }
+                }, 10000);
+
+                onAuthStateChanged(auth, async (user) => {
+                    clearTimeout(timeoutId); // Cancelar timeout si conecta
                     if (user) {
                         updateStatus('connected');
                     } else {
-                        signInAnonymously(auth).catch(e => {
+                        try {
+                            // Hacer signInAnonymously síncrono para evitar race condition
+                            await signInAnonymously(auth);
+                            // El estado se actualizará cuando onAuthStateChanged se dispare de nuevo
+                        } catch (e) {
                             updateStatus('error', e);
-                        });
+                        }
                     }
                 });
             } catch (e) {
@@ -461,7 +480,7 @@
                     particles.forEach(p => {
                         const dx = p.x - p.currX;
                         const dy = p.y - p.currY;
-                        p.vx = (p.vx + dx * 0.05) * 0.85; 
+                        p.vx = (p.vx + dx * 0.05) * 0.85;
                         p.vy = (p.vy + dy * 0.05) * 0.85;
                         p.currX += p.vx;
                         p.currY += p.vy;
@@ -525,10 +544,16 @@
             useEffect(() => {
                 if (dbStatus === 'connected') {
                     setLoading(true);
-                    window.fetchMenu().then(data => {
-                        setMenuData(data);
-                        setLoading(false);
-                    });
+                    window.fetchMenu()
+                        .then(data => {
+                            setMenuData(data);
+                            setLoading(false);
+                        })
+                        .catch(err => {
+                            console.error('[App] Error cargando menú:', err);
+                            setLoading(false);
+                            // Mantener en pantalla de error para que el usuario vea el problema
+                        });
                 }
             }, [dbStatus]);
 
@@ -591,11 +616,11 @@
                 if (storedLockout && new Date().getTime() < parseInt(storedLockout)) {
                     const remainingHours = Math.ceil((parseInt(storedLockout) - new Date().getTime()) / (1000 * 60 * 60));
                     const remainingMinutes = Math.ceil((parseInt(storedLockout) - new Date().getTime()) / (1000 * 60));
-                    
+
                     let msg = `Panel bloqueado por seguridad.`;
                     if (remainingHours > 1) msg += ` Intente en ${remainingHours} horas.`;
                     else msg += ` Intente en ${remainingMinutes} minutos.`;
-                    
+
                     alert(msg);
                     return;
                 }
@@ -683,17 +708,17 @@
             const updateCategoryIcon = (iconName) => { if (!editingIconCategory) return; const n = getCleanData(); const ci = n.categories.findIndex(c => c.id === editingIconCategory); n.categories[ci].icon = iconName; saveChanges(n); setEditingIconCategory(null); };
             const addCategory = () => { const n = getCleanData(); n.categories.push({ id: `cat-${Date.now()}`, name: 'NUEVA CATEGORÍA', icon: 'Utensils', visible: true, items: [] }); saveChanges(n); };
             const deleteCategory = (catId) => { if (!confirm("¿Borrar categoría completa?")) return; const n = getCleanData(); n.categories = n.categories.filter(c => c.id !== catId); saveChanges(n); };
-            
+
             const moveCategory = (index, direction, e) => {
                 e.stopPropagation(); const n = getCleanData();
-                if (direction === -1 && index > 0) { const t = n.categories[index]; n.categories[index] = n.categories[index - 1]; n.categories[index - 1] = t; } 
-                else if (direction === 1 && index < n.categories.length - 1) { const t = n.categories[index]; n.categories[index] = n.categories[index + 1]; n.categories[index + 1] = t; } 
+                if (direction === -1 && index > 0) { const t = n.categories[index]; n.categories[index] = n.categories[index - 1]; n.categories[index - 1] = t; }
+                else if (direction === 1 && index < n.categories.length - 1) { const t = n.categories[index]; n.categories[index] = n.categories[index + 1]; n.categories[index + 1] = t; }
                 else return;
                 saveChanges(n);
             };
 
             const changeTheme = (themeId) => { const n = getCleanData(); n.theme = themeId; saveChanges(n); };
-            
+
             // Nueva función: Cambiar criterio de orden
             const changeSort = (type, value) => {
                 const n = getCleanData();
@@ -779,16 +804,16 @@
                                                 <div className="p-4 space-y-4 cursor-auto">
                                                     {cat.items.map((item, index) => (
                                                         <div key={index} className="flex flex-col gap-4 group relative p-4 rounded-lg bg-white/5 hover:bg-white/10 border border-white/5 transition-colors shadow-sm">
-                                                            
+
                                                             {/* SECCIÓN SUPERIOR: Texto y Precios */}
                                                             <div className="flex justify-between gap-4">
                                                                 {/* Lado Izquierdo: Nombre y Descripción */}
                                                                 <div className="flex-1 flex flex-col justify-center">
                                                                     <div className="flex flex-col">
-                                                                        {isAdmin ? ( <input className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors" value={item.name} onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)} /> ) : ( <h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3> )}
-                                                                        {isAdmin ? ( <textarea className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors" value={item.desc} onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)} /> ) : ( item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p> )}
+                                                                        {isAdmin ? (<input className="bg-transparent border-b border-ritual-muted/50 w-full text-ritual-text font-medium focus:border-ritual-accent outline-none py-1 transition-colors" value={item.name} onChange={(e) => updateItem(cat.id, index, 'name', e.target.value)} />) : (<h3 className="font-medium text-base text-ritual-text tracking-wide leading-tight">{item.name}</h3>)}
+                                                                        {isAdmin ? (<textarea className="bg-transparent border-b border-ritual-muted/30 w-full text-sm text-ritual-muted mt-1 outline-none resize-none h-12 transition-colors" value={item.desc} onChange={(e) => updateItem(cat.id, index, 'desc', e.target.value)} />) : (item.desc && <p className="text-xs text-ritual-muted mt-0.5 leading-relaxed font-light opacity-80">{item.desc}</p>)}
                                                                     </div>
-                                                                    
+
                                                                     {/* Controles Admin para Imagen y Borrado */}
                                                                     {isAdmin && (
                                                                         <div className="flex items-center gap-2 mt-2">
@@ -796,7 +821,7 @@
                                                                                 <input type="file" accept="image/*" className="hidden" onChange={(e) => handleFileSelect(e, cat.id, index)} />
                                                                                 <LucideIcon name="Camera" size={14} />
                                                                             </label>
-                                                                            {item.image && ( <button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen"><LucideIcon name="ImageMinus" size={14} /></button> )}
+                                                                            {item.image && (<button onClick={() => removeItemImage(cat.id, index)} className="text-red-400/60 hover:text-red-400 p-1" title="Quitar imagen"><LucideIcon name="ImageMinus" size={14} /></button>)}
                                                                             <button onClick={() => deleteItem(cat.id, index)} className="text-red-500/50 hover:text-red-400 p-1" title="Eliminar plato"><LucideIcon name="Trash2" size={14} /></button>
                                                                         </div>
                                                                     )}
@@ -831,10 +856,10 @@
                                                                                     </div>
                                                                                     <button onClick={() => addVariant(cat.id, index)} className="text-[9px] text-ritual-muted hover:text-ritual-accent mt-1 transition-colors uppercase tracking-wider"> + Crear Variantes </button>
                                                                                 </>
-                                                                            ) : ( item.price > 0 && ( <div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center"> <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span> <span className="text-base font-bold text-ritual-accent">${item.price}</span> </div> ) )}
+                                                                            ) : (item.price > 0 && (<div className="w-full bg-white/5 px-3 py-1.5 rounded flex justify-between items-center"> <span className="text-[10px] text-ritual-muted uppercase tracking-wider">Precio</span> <span className="text-base font-bold text-ritual-accent">${item.price}</span> </div>))}
                                                                         </div>
                                                                     )}
-                                                                    {isAdmin && item.variants && ( <button onClick={() => addVariant(cat.id, index)} className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"> + Agregar Sub-Producto </button> )}
+                                                                    {isAdmin && item.variants && (<button onClick={() => addVariant(cat.id, index)} className="w-full text-[10px] text-center bg-white/5 hover:bg-ritual-accent/20 text-ritual-accent py-1 rounded transition-colors mt-1 uppercase tracking-wider"> + Agregar Sub-Producto </button>)}
                                                                 </div>
                                                             </div>
 
@@ -849,14 +874,14 @@
                                                             )}
                                                         </div>
                                                     ))}
-                                                    {isAdmin && ( <button onClick={() => addItem(cat.id)} className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"> <LucideIcon name="Plus" size={16} /> Agregar Plato </button> )}
+                                                    {isAdmin && (<button onClick={() => addItem(cat.id)} className="w-full py-3 border border-dashed border-ritual-muted/50 text-ritual-muted rounded hover:border-ritual-accent hover:text-ritual-accent hover:bg-ritual-accent/5 transition-all flex items-center justify-center gap-2 text-sm uppercase tracking-wider mt-4"> <LucideIcon name="Plus" size={16} /> Agregar Plato </button>)}
                                                 </div>
                                             </div>
                                         </div>
                                     </div>
                                 </div>
                             )))}
-                        {isAdmin && ( <button onClick={addCategory} className="w-full py-4 bg-ritual-card border border-ritual-accent/30 text-ritual-accent rounded-lg hover:bg-ritual-accent hover:text-white transition-all flex items-center justify-center gap-3 shadow-lg uppercase tracking-widest font-bold mt-6"> <LucideIcon name="FolderPlus" size={20} /> Nueva Categoría </button> )}
+                        {isAdmin && (<button onClick={addCategory} className="w-full py-4 bg-ritual-card border border-ritual-accent/30 text-ritual-accent rounded-lg hover:bg-ritual-accent hover:text-white transition-all flex items-center justify-center gap-3 shadow-lg uppercase tracking-widest font-bold mt-6"> <LucideIcon name="FolderPlus" size={20} /> Nueva Categoría </button>)}
                     </main>
 
                     {/* FOOTER */}
@@ -893,20 +918,20 @@
                             <div className="bg-ritual-card p-8 rounded-xl w-full max-w-xs border border-ritual-accent/50 shadow-[0_0_30px_rgba(0,0,0,0.5)]">
                                 <div className="text-center mb-6"><LucideIcon name="Lock" className="mx-auto text-ritual-accent mb-2" size={24} /><h3 className="text-ritual-text text-xl font-light uppercase tracking-widest">Acceso Admin</h3></div>
                                 <form onSubmit={handleLogin} className="space-y-4">
-                                    <input 
-                                        type="password" 
-                                        placeholder="Contraseña" 
-                                        className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50" 
-                                        value={password} 
-                                        onChange={(e) => setPassword(e.target.value)} 
-                                        autoFocus 
+                                    <input
+                                        type="password"
+                                        placeholder="Contraseña"
+                                        className="w-full bg-ritual-bg border border-ritual-muted/50 p-3 rounded text-ritual-text focus:border-ritual-accent outline-none transition-colors text-center tracking-widest placeholder-ritual-muted/50"
+                                        value={password}
+                                        onChange={(e) => setPassword(e.target.value)}
+                                        autoFocus
                                         disabled={isVerifying}
                                         maxLength={20} // Limite HTML nativo
                                     />
                                     <div className="flex gap-3 pt-2">
                                         <button type="button" onClick={() => setShowLogin(false)} className="flex-1 py-2 bg-transparent border border-ritual-muted text-ritual-muted rounded hover:bg-white/5 transition-colors uppercase text-xs tracking-wider">Cancelar</button>
-                                        <button 
-                                            type="submit" 
+                                        <button
+                                            type="submit"
                                             disabled={isVerifying || password.length === 0}
                                             className={`flex-1 py-2 bg-ritual-accent text-white font-bold rounded shadow-lg shadow-ritual-accent/20 transition-colors uppercase text-xs tracking-wider flex justify-center items-center gap-2 ${isVerifying ? 'opacity-70 cursor-wait' : 'hover:bg-ritual-accent/90'}`}
                                         >
@@ -1029,7 +1054,7 @@
                                 <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider flex items-center gap-2 border transition-colors ${dbStatus === 'connected' ? 'bg-green-500/20 text-green-100 border-green-500/50' : 'bg-red-500/20 text-red-100 border-red-500/50'} `}><div className={`w-2 h-2 rounded-full ${dbStatus === 'connected' ? 'bg-green-400 shadow-[0_0_5px_rgba(74,222,128,0.8)]' : 'bg-red-400 animate-pulse'}`}></div>{dbStatus === 'connected' ? 'On' : 'Off'}</div>
                             </div>
                             <div className="flex items-center gap-4">
-                                {isSaving && ( <div className="flex items-center gap-2 text-white/90 animate-pulse"><LucideIcon name="RefreshCw" className="animate-spin" size={14} /><span className="text-[10px] uppercase font-bold tracking-widest hidden sm:inline">Guardando...</span></div> )}
+                                {isSaving && (<div className="flex items-center gap-2 text-white/90 animate-pulse"><LucideIcon name="RefreshCw" className="animate-spin" size={14} /><span className="text-[10px] uppercase font-bold tracking-widest hidden sm:inline">Guardando...</span></div>)}
                                 <button onClick={() => setIsAdmin(false)} className="bg-black/20 px-4 py-1.5 rounded-full hover:bg-black/40 transition-colors uppercase text-[10px] tracking-widest font-bold">Salir</button>
                             </div>
                         </div>
